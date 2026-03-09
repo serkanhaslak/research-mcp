@@ -112,8 +112,8 @@ export async function handleOAuth(
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       issuer: base,
-      authorization_endpoint: `${base}/authorize`,
-      token_endpoint: `${base}/token`,
+      authorization_endpoint: `${base}/oauth/authorize`,
+      token_endpoint: `${base}/oauth/token`,
       response_types_supported: ['code'],
       grant_types_supported: ['authorization_code'],
       code_challenge_methods_supported: ['S256'],
@@ -123,7 +123,7 @@ export async function handleOAuth(
   }
 
   // ---- Authorization Endpoint ----
-  if (url.pathname === '/authorize' && isAuthEnabled()) {
+  if (url.pathname === '/oauth/authorize' && isAuthEnabled()) {
     if (req.method === 'GET') {
       const clientId = url.searchParams.get('client_id') || '';
       const redirectUri = url.searchParams.get('redirect_uri') || '';
@@ -166,7 +166,7 @@ button:hover{opacity:.85}
 <li>Web Scraping with AI Extraction</li>
 <li>Deep Research Synthesis</li>
 </ul>
-<form method="POST" action="/authorize">
+<form method="POST" action="/oauth/authorize">
 <input type="hidden" name="client_id" value="${esc(clientId)}">
 <input type="hidden" name="redirect_uri" value="${esc(redirectUri)}">
 <input type="hidden" name="state" value="${esc(state)}">
@@ -210,7 +210,7 @@ button:hover{opacity:.85}
   }
 
   // ---- Token Endpoint ----
-  if (url.pathname === '/token' && req.method === 'POST' && isAuthEnabled()) {
+  if (url.pathname === '/oauth/token' && req.method === 'POST' && isAuthEnabled()) {
     const body = await readBody(req);
     const p = new URLSearchParams(body);
 
