@@ -277,9 +277,15 @@ if (transportMode === 'http') {
 
   const PORT = parseInt(process.env.MCP_PORT || process.env.PORT || String(DEFAULT_MCP_PORT), 10);
 
+  // Session TTL — reap idle sessions to prevent memory leaks from clients that disconnect without DELETE
+  const SESSION_TTL_MS = Math.max(60_000,
+    parseInt(process.env.SESSION_TTL_MS || '', 10) || 2 * 60 * 60 * 1000); // default 2h
+  const SESSION_REAP_INTERVAL_MS = 5 * 60 * 1000; // sweep every 5 min
+
   type SessionEntry = {
     transport: InstanceType<typeof StreamableHTTPServerTransport>;
     server: Server;
+    lastActivity: number;
   };
 
   // Map of session ID → transport + server for multi-session support
@@ -298,7 +304,9 @@ if (transportMode === 'http') {
     sessionId: string | undefined,
   ): Promise<void> {
     if (sessionId && sessions.has(sessionId)) {
-      await sessions.get(sessionId)!.transport.handleRequest(req, res);
+      const session = sessions.get(sessionId)!;
+      session.lastActivity = Date.now();
+      await session.transport.handleRequest(req, res);
     } else {
       res.writeHead(400).end('Bad request — missing session ID');
     }
@@ -311,7 +319,9 @@ if (transportMode === 'http') {
     sessionId: string | undefined,
   ): Promise<void> {
     if (sessionId && sessions.has(sessionId)) {
-      await sessions.get(sessionId)!.transport.handleRequest(req, res);
+      const session = sessions.get(sessionId)!;
+      session.lastActivity = Date.now();
+      await session.transport.handleRequest(req, res);
       return;
     }
 
@@ -329,8 +339,8 @@ if (transportMode === 'http') {
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (id) => {
-        sessions.set(id, { transport, server: sessionServer });
-        console.error(`[HTTP] Session ${id} initialized`);
+        sessions.set(id, { transport, server: sessionServer, lastActivity: Date.now() });
+        console.error(`[HTTP] Session ${id} initialized (active: ${sessions.size})`);
       },
       onsessionclosed: async (id) => {
         const session = sessions.get(id);
@@ -372,7 +382,7 @@ if (transportMode === 'http') {
     // Health check
     if (url.pathname === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', name: SERVER.NAME, version: SERVER.VERSION }));
+      res.end(JSON.stringify({ status: 'ok', name: SERVER.NAME, version: SERVER.VERSION, activeSessions: sessions.size }));
       return;
     }
 
@@ -402,6 +412,18 @@ if (transportMode === 'http') {
   httpServer.listen(PORT, () => {
     console.error(`🚀 ${SERVER.NAME} v${SERVER.VERSION} listening on http://localhost:${PORT}/mcp`);
   });
+
+  // Session reaper — close sessions idle beyond SESSION_TTL_MS
+  const sessionReapInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [id, session] of sessions) {
+      if (now - session.lastActivity > SESSION_TTL_MS) {
+        console.error(`[HTTP] Reaping idle session ${id} (idle ${Math.round((now - session.lastActivity) / 1000)}s, active: ${sessions.size - 1})`);
+        closeSession(session, id).catch(() => {/* ignore */});
+      }
+    }
+  }, SESSION_REAP_INTERVAL_MS);
+  sessionReapInterval.unref(); // Don't prevent process exit
 } else {
   // STDIO transport (default)
   const transport = new StdioServerTransport();
