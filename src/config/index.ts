@@ -50,6 +50,20 @@ function safeParseInt(
 }
 
 // ============================================================================
+// Reasoning Effort Validation
+// ============================================================================
+
+const VALID_REASONING_EFFORTS = ['low', 'medium', 'high'] as const;
+type ReasoningEffort = typeof VALID_REASONING_EFFORTS[number];
+
+function parseReasoningEffort(value: string | undefined): ReasoningEffort {
+  if (value && VALID_REASONING_EFFORTS.includes(value as ReasoningEffort)) {
+    return value as ReasoningEffort;
+  }
+  return 'high';
+}
+
+// ============================================================================
 // Environment Parsing
 // ============================================================================
 
@@ -58,6 +72,7 @@ interface EnvConfig {
   SEARCH_API_KEY: string | undefined;
   REDDIT_CLIENT_ID: string | undefined;
   REDDIT_CLIENT_SECRET: string | undefined;
+  CEREBRAS_API_KEY: string | undefined;
 }
 
 let cachedEnv: EnvConfig | null = null;
@@ -66,6 +81,7 @@ export function resetEnvCache(): void {
   cachedEnv = null;
   cachedResearch = null;
   cachedLlmExtraction = null;
+  cachedCerebras = null;
 }
 
 export function parseEnv(): EnvConfig {
@@ -75,6 +91,7 @@ export function parseEnv(): EnvConfig {
     SEARCH_API_KEY: process.env.SERPER_API_KEY || undefined,
     REDDIT_CLIENT_ID: process.env.REDDIT_CLIENT_ID || undefined,
     REDDIT_CLIENT_SECRET: process.env.REDDIT_CLIENT_SECRET || undefined,
+    CEREBRAS_API_KEY: process.env.CEREBRAS_API_KEY || undefined,
   };
   return cachedEnv;
 }
@@ -99,11 +116,11 @@ function getResearch(): ResearchConfig {
   if (cachedResearch) return cachedResearch;
   cachedResearch = {
     BASE_URL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
-    MODEL: process.env.RESEARCH_MODEL || 'x-ai/grok-4.1-fast',
-    FALLBACK_MODEL: process.env.RESEARCH_FALLBACK_MODEL || 'openai/gpt-oss-120b:nitro',
+    MODEL: process.env.RESEARCH_MODEL || 'x-ai/grok-4-fast',
+    FALLBACK_MODEL: process.env.RESEARCH_FALLBACK_MODEL || 'google/gemini-2.5-flash',
     API_KEY: process.env.OPENROUTER_API_KEY || '',
     TIMEOUT_MS: safeParseInt(process.env.API_TIMEOUT_MS, 1800000, 1000, 3600000),
-    REASONING_EFFORT: (process.env.DEFAULT_REASONING_EFFORT as 'low' | 'medium' | 'high') || 'high',
+    REASONING_EFFORT: parseReasoningEffort(process.env.DEFAULT_REASONING_EFFORT),
     MAX_URLS: safeParseInt(process.env.DEFAULT_MAX_URLS, 100, 10, 200),
   };
   return cachedResearch;
@@ -138,6 +155,7 @@ export interface Capabilities {
   scraping: boolean;      // SCRAPEDO_API_KEY
   deepResearch: boolean;  // OPENROUTER_API_KEY
   llmExtraction: boolean; // OPENROUTER_API_KEY (for what_to_extract in scraping)
+  cerebras: boolean;      // USE_CEREBRAS=true + CEREBRAS_API_KEY
 }
 
 export function getCapabilities(): Capabilities {
@@ -147,7 +165,8 @@ export function getCapabilities(): Capabilities {
     search: !!env.SEARCH_API_KEY,
     scraping: !!env.SCRAPER_API_KEY,
     deepResearch: !!RESEARCH.API_KEY,
-    llmExtraction: !!RESEARCH.API_KEY, // Reuses OPENROUTER for LLM extraction
+    llmExtraction: !!RESEARCH.API_KEY || CEREBRAS.ENABLED,
+    cerebras: CEREBRAS.ENABLED,
   };
 }
 
@@ -158,6 +177,7 @@ export function getMissingEnvMessage(capability: keyof Capabilities): string {
     scraping: '❌ **Web scraping unavailable.** Set `SCRAPEDO_API_KEY` to enable URL content extraction.\n\n👉 Sign up at: https://scrape.do (1,000 free credits)',
     deepResearch: '❌ **Deep research unavailable.** Set `OPENROUTER_API_KEY` to enable AI-powered research.\n\n👉 Get your API key at: https://openrouter.ai/keys',
     llmExtraction: '⚠️ **AI extraction disabled.** The `use_llm` and `what_to_extract` features require `OPENROUTER_API_KEY`.\n\nScraping will work but without intelligent content filtering.',
+    cerebras: '⚠️ **Cerebras not configured.** Set `USE_CEREBRAS=true` and `CEREBRAS_API_KEY` to use Cerebras for LLM extraction.\n\n👉 Get your API key at: https://cloud.cerebras.ai',
   };
   return messages[capability];
 }
@@ -174,16 +194,17 @@ export const SCRAPER = {
   MAX_URLS: 50,
   RETRY_COUNT: 3,
   RETRY_DELAYS: [2000, 4000, 8000] as const,
-  EXTRACTION_PREFIX: 'MUST DO RULES: Use SOURCE only (never hallucinate). Be concise but comprehensive with maximum information density. Choose format by content: markdown tables for structured/comparative/multi-item data, nested lists for hierarchical/process/causal data (max depth 5). If coverage needs breadth, you may use up to 50 markdown tables/sections (token budget permitting). No preamble, no filler, no meta-commentary.',
-  EXTRACTION_SUFFIX: 'MUST DO: Preserve exact numbers, units, URLs, and code identifiers. Cover every requested target; remove repetition; if evidence is missing, state "Not found in SOURCE".',
+  EXTRACTION_PREFIX: 'Extract ONLY from document — never hallucinate. For structured data (pricing, specs, features) → markdown table. Otherwise → tight bullet points. No intro, no confirmation message, no meta-commentary.',
+  EXTRACTION_SUFFIX: 'Output grounded info only. First line = content, not preamble.',
 } as const;
 
+// ============================================================================
 // Research Compression Prefix/Suffix
 // ============================================================================
+
 export const RESEARCH_PROMPTS = {
-  SUFFIX: `MUST DO RULES: Do not restate the question. Answer each numbered sub-question directly. Use markdown tables for structured comparisons and nested lists (max depth 5) for hierarchies. Be concise yet comprehensive; remove repetition; mark missing evidence explicitly.`,
-};
-// ============================================================================
+  SUFFIX: `CONSTRAINTS: No restating the question. No hedging preambles. Cite sources inline [source]. NEVER hallucinate — only report what sources confirm.`,
+} as const;
 
 // ============================================================================
 // Reddit Configuration
@@ -242,5 +263,36 @@ function getLlmExtraction(): LlmExtractionConfig {
 export const LLM_EXTRACTION: LlmExtractionConfig = new Proxy({} as LlmExtractionConfig, {
   get(_target, prop: string) {
     return getLlmExtraction()[prop as keyof LlmExtractionConfig];
+  },
+});
+
+// ============================================================================
+// Cerebras Configuration (optional — overrides LLM extraction when enabled)
+// ============================================================================
+
+interface CerebrasConfig {
+  readonly ENABLED: boolean;
+  readonly API_KEY: string;
+  readonly BASE_URL: string;
+  readonly MODEL: string;
+}
+
+let cachedCerebras: CerebrasConfig | null = null;
+
+function getCerebras(): CerebrasConfig {
+  if (cachedCerebras) return cachedCerebras;
+  const env = parseEnv();
+  cachedCerebras = {
+    ENABLED: process.env.USE_CEREBRAS === 'true' && !!env.CEREBRAS_API_KEY,
+    API_KEY: env.CEREBRAS_API_KEY || '',
+    BASE_URL: 'https://api.cerebras.ai/v1',
+    MODEL: 'zai-glm-4.7',
+  };
+  return cachedCerebras;
+}
+
+export const CEREBRAS: CerebrasConfig = new Proxy({} as CerebrasConfig, {
+  get(_target, prop: string) {
+    return getCerebras()[prop as keyof CerebrasConfig];
   },
 });

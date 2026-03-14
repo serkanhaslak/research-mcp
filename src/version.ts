@@ -14,11 +14,13 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
 // Defaults used when running in Workers or if package.json cannot be loaded
-let packageJson: { version: string; name: string; description: string } = {
-  version: '3.8.0',
-  name: 'mcp-researchpowerpack',
+const DEFAULT_PACKAGE_INFO = {
+  version: '3.9.5',
+  name: 'mcp-research-powerpack',
   description: 'Research Powerpack MCP Server',
-};
+} as const;
+
+let packageJson: { version: string; name: string; description: string } = { ...DEFAULT_PACKAGE_INFO };
 
 try {
   if (typeof import.meta.url === 'string' && import.meta.url.startsWith('file:')) {
@@ -52,7 +54,7 @@ export const PACKAGE_DESCRIPTION: string = packageJson.description;
 
 /**
  * Formatted version string for user agents and logging
- * Example: "mcp-researchpowerpack/3.2.0"
+ * Example: "mcp-research-powerpack/3.2.0"
  */
 export const USER_AGENT_VERSION: string = `${PACKAGE_NAME}/${VERSION}`;
 

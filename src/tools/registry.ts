@@ -28,8 +28,8 @@ import { handleWebSearch } from './search.js';
  * MCP-compliant tool result with index signature for SDK compatibility
  */
 export interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
+  readonly content: Array<{ readonly type: 'text'; readonly text: string }>;
+  readonly isError?: boolean;
   [key: string]: unknown;
 }
 
@@ -37,12 +37,12 @@ export interface CallToolResult {
  * Configuration for a registered tool
  */
 export interface ToolRegistration {
-  name: string;
-  capability?: keyof Capabilities;
-  schema: z.ZodSchema;
-  handler: (params: unknown) => Promise<string>;
-  postValidate?: (params: unknown) => string | undefined;
-  transformResponse?: (result: string) => { content: string; isError?: boolean };
+  readonly name: string;
+  readonly capability?: keyof Capabilities;
+  readonly schema: z.ZodSchema;
+  readonly handler: (params: unknown) => Promise<string>;
+  readonly postValidate?: (params: unknown) => string | undefined;
+  readonly transformResponse?: (result: string) => { content: string; isError?: boolean };
 }
 
 /**
@@ -55,27 +55,22 @@ export type ToolRegistry = Record<string, ToolRegistration>;
 // ============================================================================
 
 const searchRedditParamsSchema = z.object({
-  queries: z.array(z.string()).min(3).max(50),
+  queries: z.array(z.string()).min(3, 'search_reddit: MINIMUM 3 queries required. Add more diverse queries covering different perspectives.').max(50),
   date_after: z.string().optional(),
 });
 
-const fetchRedditSchema = z.object({
-  urls: z.array(z.string()).min(2).max(50).describe('2-50 Reddit URLs. Use search_reddit results as input.'),
-  fetch_comments: z.boolean().default(true).describe('Fetch comment trees (recommended true).'),
-  max_comments: z.number().default(100).describe('Optional comment budget override.'),
-  use_llm: z.boolean().default(false).describe('LLM summarization toggle (default false). Keep false for exact quote/code fidelity; enable for concise+comprehensive synthesis when requested.'),
-  what_to_extract: z.string().optional().describe('Optional extraction/synthesis targets when use_llm=true. You may request markdown tables or nested lists (max depth 5).'),
+const getRedditPostParamsSchema = z.object({
+  urls: z.array(z.string()).min(2).max(50)
+    .describe('2-50 Reddit URLs. More = broader consensus. Get from search_reddit.'),
+  fetch_comments: z.boolean().default(true)
+    .describe('Fetch comments (true recommended - best insights in comments)'),
+  max_comments: z.number().default(100)
+    .describe('Override auto allocation. Leave empty for smart allocation.'),
+  use_llm: z.boolean().default(false)
+    .describe('Default false — DO NOT enable unless user explicitly requests synthesis. Raw comments preserve exact quotes, code snippets, and nuanced opinions that LLM summarization loses.'),
+  what_to_extract: z.string().optional()
+    .describe('Only used when use_llm=true. Extraction instructions for AI synthesis.'),
 });
-
-// ============================================================================
-// Tool Aliases (backward-compat + rename support)
-// ============================================================================
-
-const TOOL_ALIASES: Record<string, string> = {
-  web_search: 'search_google',
-  get_reddit_post: 'fetch_reddit',
-  scrape_links: 'scrape_pages',
-};
 
 // ============================================================================
 // Handler Wrappers
@@ -92,10 +87,10 @@ async function searchRedditHandler(params: unknown): Promise<string> {
 }
 
 /**
- * Wrapper for fetch_reddit handler
+ * Wrapper for get_reddit_post handler
  */
-async function fetchRedditHandler(params: unknown): Promise<string> {
-  const p = params as z.infer<typeof fetchRedditSchema>;
+async function getRedditPostHandler(params: unknown): Promise<string> {
+  const p = params as z.infer<typeof getRedditPostParamsSchema>;
   return handleGetRedditPosts(
     p.urls,
     env.REDDIT_CLIENT_ID || '',
@@ -119,7 +114,7 @@ async function deepResearchHandler(params: unknown): Promise<string> {
 }
 
 /**
- * Wrapper for scrape_pages handler
+ * Wrapper for scrape_links handler
  */
 async function scrapeLinksHandler(params: unknown): Promise<string> {
   const { content } = await handleScrapeLinks(params as ScrapeLinksParams);
@@ -127,7 +122,7 @@ async function scrapeLinksHandler(params: unknown): Promise<string> {
 }
 
 /**
- * Wrapper for search_google handler
+ * Wrapper for web_search handler
  */
 async function webSearchHandler(params: unknown): Promise<string> {
   const { content } = await handleWebSearch(params as WebSearchParams);
@@ -149,11 +144,11 @@ export const toolRegistry: ToolRegistry = {
     handler: searchRedditHandler,
   },
 
-  fetch_reddit: {
-    name: 'fetch_reddit',
+  get_reddit_post: {
+    name: 'get_reddit_post',
     capability: 'reddit',
-    schema: fetchRedditSchema,
-    handler: fetchRedditHandler,
+    schema: getRedditPostParamsSchema,
+    handler: getRedditPostHandler,
   },
 
   deep_research: {
@@ -167,8 +162,8 @@ export const toolRegistry: ToolRegistry = {
     }),
   },
 
-  scrape_pages: {
-    name: 'scrape_pages',
+  scrape_links: {
+    name: 'scrape_links',
     capability: 'scraping',
     schema: scrapeLinksParamsSchema,
     handler: scrapeLinksHandler,
@@ -178,17 +173,76 @@ export const toolRegistry: ToolRegistry = {
     }),
   },
 
-  search_google: {
-    name: 'search_google',
+  web_search: {
+    name: 'web_search',
     capability: 'search',
     schema: webSearchParamsSchema,
     handler: webSearchHandler,
     transformResponse: (result) => ({
       content: result,
-      isError: result.includes('# ❌ search_google'),
+      isError: result.includes('# ❌ web_search'),
     }),
   },
 };
+
+// ============================================================================
+// Execute Tool Helpers
+// ============================================================================
+
+/**
+ * Validate params with Zod schema and optional post-validation.
+ * Returns validated params or a CallToolResult error.
+ */
+function validateToolParams(
+  tool: ToolRegistration,
+  args: unknown,
+): { params: unknown } | CallToolResult {
+  let validatedParams: unknown;
+  try {
+    validatedParams = tool.schema.parse(args);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      const issues = error.issues
+        .map((i) => `- **${i.path.join('.') || 'root'}**: ${i.message}`)
+        .join('\n');
+      throw new McpError(
+        McpErrorCode.InvalidParams,
+        `Validation Error:\n${issues}`
+      );
+    }
+    const structured = classifyError(error);
+    return createToolErrorFromStructured(structured);
+  }
+
+  if (tool.postValidate) {
+    const postError = tool.postValidate(validatedParams);
+    if (postError) {
+      return {
+        content: [{ type: 'text', text: `# ❌ Validation Error\n\n${postError}` }],
+        isError: true,
+      };
+    }
+  }
+
+  return { params: validatedParams };
+}
+
+/**
+ * Build the final CallToolResult from a handler result string,
+ * applying the tool's transformResponse if present.
+ */
+function buildToolResult(result: string, tool: ToolRegistration): CallToolResult {
+  if (tool.transformResponse) {
+    const transformed = tool.transformResponse(result);
+    return {
+      content: [{ type: 'text', text: transformed.content }],
+      isError: transformed.isError,
+    };
+  }
+  return {
+    content: [{ type: 'text', text: result }],
+  };
+}
 
 // ============================================================================
 // Execute Tool (Main Entry Point)
@@ -198,7 +252,7 @@ export const toolRegistry: ToolRegistry = {
  * Execute a tool by name with full middleware chain
  *
  * Middleware steps:
- * 1. Resolve aliases and lookup tool in registry (throw McpError if not found)
+ * 1. Lookup tool in registry (throw McpError if not found)
  * 2. Check capability (return error response if missing)
  * 3. Validate params with Zod (return error response if invalid)
  * 4. Execute handler (catch and format any errors)
@@ -214,9 +268,7 @@ export async function executeTool(
   args: unknown,
   capabilities: Capabilities
 ): Promise<CallToolResult> {
-  // Step 1: Resolve aliases and lookup tool
-  const resolvedName = TOOL_ALIASES[name] ?? name;
-  const tool = toolRegistry[resolvedName];
+  const tool = toolRegistry[name];
   if (!tool) {
     throw new McpError(
       McpErrorCode.MethodNotFound,
@@ -224,82 +276,25 @@ export async function executeTool(
     );
   }
 
-  // Step 2: Check capability
   if (tool.capability && !capabilities[tool.capability]) {
-    return {
-      content: [{ type: 'text', text: getMissingEnvMessage(tool.capability) }],
-      isError: true,
-    };
+    throw new McpError(
+      McpErrorCode.InvalidRequest,
+      getMissingEnvMessage(tool.capability)
+    );
   }
 
-  // Step 3: Validate params with Zod
-  let validatedParams: unknown;
-  try {
-    validatedParams = tool.schema.parse(args);
-  } catch (error) {
-    if (error instanceof ZodError) {
-      const issues = error.issues
-        .map((i) => {
-          const field = i.path.join('.') || 'root';
-          let fix = '';
-          if (i.code === 'too_small' && 'minimum' in i) {
-            const received = 'received' in i ? (i as { received?: number }).received : undefined;
-            const deficit = typeof received === 'number' ? Math.max(0, (i.minimum as number) - received) : undefined;
-            fix = deficit !== undefined
-              ? `\n  **Quick fix:** Add ${deficit} more item(s) to meet the minimum of ${i.minimum}.`
-              : `\n  **Quick fix:** Add more items to meet the minimum of ${i.minimum}.`;
-          } else if (i.code === 'too_big' && 'maximum' in i) {
-            fix = `\n  **Quick fix:** Remove excess items to stay at or below ${i.maximum}.`;
-          } else if (i.code === 'invalid_type') {
-            fix = `\n  **Quick fix:** Expected ${i.expected}, got ${i.received}.`;
-          }
-          return `- **${field}**: ${i.message}${fix}`;
-        })
-        .join('\n');
-      return {
-        content: [{ type: 'text', text: `# ❌ Validation Error — Fix & Retry\n\n${issues}\n\nCorrect the parameter(s) above and call the tool again immediately.` }],
-        isError: true,
-      };
-    }
-    // Non-Zod validation error
-    const structured = classifyError(error);
-    return createToolErrorFromStructured(structured);
-  }
+  const validation = validateToolParams(tool, args);
+  if ('content' in validation) return validation;
 
-  // Step 3.5: Optional post-validation
-  if (tool.postValidate) {
-    const postError = tool.postValidate(validatedParams);
-    if (postError) {
-      return {
-        content: [{ type: 'text', text: `# ❌ Validation Error — Fix & Retry\n\n${postError}` }],
-        isError: true,
-      };
-    }
-  }
-
-  // Step 4: Execute handler
   let result: string;
   try {
-    result = await tool.handler(validatedParams);
+    result = await tool.handler(validation.params);
   } catch (error) {
-    // Handler threw (shouldn't happen if handlers follow "never throw" pattern)
     const structured = classifyError(error);
     return createToolErrorFromStructured(structured);
   }
 
-  // Step 5: Transform response
-  if (tool.transformResponse) {
-    const transformed = tool.transformResponse(result);
-    return {
-      content: [{ type: 'text', text: transformed.content }],
-      isError: transformed.isError,
-    };
-  }
-
-  // Default: success response
-  return {
-    content: [{ type: 'text', text: result }],
-  };
+  return buildToolResult(result, tool);
 }
 
 // ============================================================================
@@ -314,10 +309,10 @@ export function getRegisteredToolNames(): string[] {
 }
 
 /**
- * Check if a tool is registered (including aliases)
+ * Check if a tool is registered
  */
 export function isToolRegistered(name: string): boolean {
-  return name in toolRegistry || name in TOOL_ALIASES;
+  return name in toolRegistry;
 }
 
 /**

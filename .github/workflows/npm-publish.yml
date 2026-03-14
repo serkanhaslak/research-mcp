@@ -1,4 +1,4 @@
-name: CI & Publish
+name: Publish to npm
 
 on:
   push:
@@ -15,10 +15,9 @@ on:
 
 permissions:
   contents: write
-  id-token: write
 
 jobs:
-  build:
+  publish:
     runs-on: ubuntu-latest
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
     steps:
@@ -29,7 +28,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 9
 
       - uses: actions/setup-node@v4
         with:
@@ -41,18 +40,18 @@ jobs:
 
       - run: pnpm build
 
-      - name: Check version on npm
+      - name: Check if version exists on npm
         id: check
         run: |
           PKG_NAME=$(node -p "require('./package.json').name")
           PKG_VER=$(node -p "require('./package.json').version")
           echo "name=$PKG_NAME version=$PKG_VER"
-          if pnpm view "${PKG_NAME}@${PKG_VER}" version --registry https://registry.npmjs.org 2>/dev/null; then
+          set +e
+          npm view "${PKG_NAME}@${PKG_VER}" version 2>/dev/null
+          if [ $? -eq 0 ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Version ${PKG_VER} already exists on npm"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "Version ${PKG_VER} not found on npm"
           fi
 
       - name: Bump version
@@ -62,14 +61,16 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           BUMP="${{ inputs.bump || 'patch' }}"
-          pnpm version "$BUMP" -m "chore: bump version to %s [skip ci]"
-          NEW_VER=$(node -p "require('./package.json').version")
-          echo "Bumped to ${NEW_VER}"
+          npm version "$BUMP" -m "chore: bump to v%s [skip ci]"
           git push && git push --tags
           echo "bumped=true" >> "$GITHUB_OUTPUT"
 
-      - name: Publish to npm (OIDC provenance)
+      - name: Rebuild after bump
+        if: steps.bump.outputs.bumped == 'true'
+        run: pnpm build
+
+      - name: Publish to npm
         if: steps.check.outputs.exists == 'false' || steps.bump.outputs.bumped == 'true'
-        run: pnpm publish --access public --provenance --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm publish --access public --no-git-checks

@@ -7,16 +7,58 @@
 import { CTR_WEIGHTS } from '../config/index.js';
 import type { KeywordSearchResult, RedditSearchResult } from '../clients/search.js';
 
+/** Minimum frequency for web search consensus marking */
+const WEB_CONSENSUS_THRESHOLD = 3 as const;
+
+/** Minimum frequency for Reddit consensus marking (lower due to fewer overlapping results) */
+const REDDIT_CONSENSUS_THRESHOLD = 2 as const;
+
+/** Minimum weight assigned to positions beyond top 10 */
+const MIN_BEYOND_TOP10_WEIGHT = 0 as const;
+
+/** Weight decay per position beyond top 10 */
+const BEYOND_TOP10_DECAY = 0.5 as const;
+
+/** Base position for beyond-top-10 weight calculation */
+const BEYOND_TOP10_BASE = 10 as const;
+
+/** Default minimum consensus URLs before lowering threshold (web search) */
+const DEFAULT_MIN_CONSENSUS_URLS = 5 as const;
+
+/** Default minimum consensus URLs before lowering threshold (Reddit) */
+const DEFAULT_REDDIT_MIN_CONSENSUS_URLS = 3 as const;
+
+/** High consensus frequency threshold for enhanced output labeling */
+const HIGH_CONSENSUS_THRESHOLD = 4 as const;
+
+/** Maximum top resources to show in enhanced output */
+const MAX_TOP_RESOURCES = 20 as const;
+
+/** Maximum URLs to show in frequency metadata list */
+const MAX_FREQ_METADATA_URLS = 30 as const;
+
+/** Maximum top URLs for scrape_links suggestion */
+const MAX_SCRAPE_SUGGESTION_URLS = 5 as const;
+
+/** Maximum top URLs for Reddit get_reddit_post suggestion */
+const MAX_REDDIT_SUGGESTION_URLS = 10 as const;
+
+/** Maximum short URL display length */
+const MAX_SHORT_URL_LENGTH = 40 as const;
+
+/** Maximum snippet length before truncation */
+const MAX_SNIPPET_LENGTH = 200 as const;
+
 /**
  * Aggregated URL data structure
  */
 interface AggregatedUrl {
-  url: string;
+  readonly url: string;
   title: string;
   snippet: string;
   frequency: number;
-  positions: number[];
-  queries: string[];
+  readonly positions: number[];
+  readonly queries: string[];
   bestPosition: number;
   totalScore: number;
 }
@@ -25,27 +67,27 @@ interface AggregatedUrl {
  * Ranked URL with normalized score
  */
 interface RankedUrl {
-  url: string;
-  title: string;
-  snippet: string;
-  rank: number;
-  score: number;
-  frequency: number;
-  positions: number[];
-  queries: string[];
-  bestPosition: number;
-  isConsensus: boolean;
+  readonly url: string;
+  readonly title: string;
+  readonly snippet: string;
+  readonly rank: number;
+  readonly score: number;
+  readonly frequency: number;
+  readonly positions: number[];
+  readonly queries: string[];
+  readonly bestPosition: number;
+  readonly isConsensus: boolean;
 }
 
 /**
  * Aggregation result containing all processed data
  */
 interface AggregationResult {
-  rankedUrls: RankedUrl[];
-  totalUniqueUrls: number;
-  totalQueries: number;
-  frequencyThreshold: number;
-  thresholdNote?: string;
+  readonly rankedUrls: RankedUrl[];
+  readonly totalUniqueUrls: number;
+  readonly totalQueries: number;
+  readonly frequencyThreshold: number;
+  readonly thresholdNote?: string;
 }
 
 /**
@@ -57,7 +99,7 @@ function getCtrWeight(position: number): number {
     return CTR_WEIGHTS[position] ?? 0;
   }
   // Positions beyond 10 get diminishing returns
-  return Math.max(0, 10 - (position - 10) * 0.5);
+  return Math.max(MIN_BEYOND_TOP10_WEIGHT, BEYOND_TOP10_BASE - (position - BEYOND_TOP10_BASE) * BEYOND_TOP10_DECAY);
 }
 
 /**
@@ -147,7 +189,7 @@ function calculateWeightedScores(urls: AggregatedUrl[]): RankedUrl[] {
   const sorted = [...urls].sort((a, b) => b.totalScore - a.totalScore);
 
   // Find max score for normalization
-  const maxScore = sorted[0].totalScore;
+  const maxScore = sorted[0]!.totalScore;
 
   // Map to ranked URLs with normalized scores
   return sorted.map((url, index) => ({
@@ -160,16 +202,16 @@ function calculateWeightedScores(urls: AggregatedUrl[]): RankedUrl[] {
     positions: url.positions,
     queries: url.queries,
     bestPosition: url.bestPosition,
-    isConsensus: url.frequency >= 3,
+    isConsensus: url.frequency >= WEB_CONSENSUS_THRESHOLD,
   }));
 }
 
 /**
  * Mark consensus status for a URL
- * Returns "✓" if frequency >= 3, else "✗"
+ * Returns "✓" if frequency >= threshold, else "✗"
  */
 export function markConsensus(frequency: number): string {
-  return frequency >= 3 ? '✓' : '✗';
+  return frequency >= WEB_CONSENSUS_THRESHOLD ? '✓' : '✗';
 }
 
 /**
@@ -178,9 +220,9 @@ export function markConsensus(frequency: number): string {
 function generateJustification(url: RankedUrl, rank: number): string {
   const parts: string[] = [];
   
-  if (url.frequency >= 4) {
+  if (url.frequency >= HIGH_CONSENSUS_THRESHOLD) {
     parts.push(`Appeared in ${url.frequency} different searches showing strong cross-query relevance`);
-  } else if (url.frequency >= 3) {
+  } else if (url.frequency >= WEB_CONSENSUS_THRESHOLD) {
     parts.push(`Found across ${url.frequency} searches indicating solid topical coverage`);
   } else {
     parts.push(`Appeared in ${url.frequency} search${url.frequency > 1 ? 'es' : ''}`);
@@ -222,8 +264,8 @@ export function generateEnhancedOutput(
   lines.push('### 🥇 Top Consensus Resources');
   lines.push('');
   
-  for (const url of rankedUrls.slice(0, 20)) {
-    const highConsensus = url.frequency >= 4 ? ' ⭐ HIGHEST CONSENSUS' : '';
+  for (const url of rankedUrls.slice(0, MAX_TOP_RESOURCES)) {
+    const highConsensus = url.frequency >= HIGH_CONSENSUS_THRESHOLD ? ' ⭐ HIGHEST CONSENSUS' : '';
     lines.push(`#### #${url.rank}: ${url.title} (Score: ${url.score.toFixed(1)})${highConsensus}`);
     
     // Appeared in queries
@@ -234,8 +276,8 @@ export function generateEnhancedOutput(
     lines.push(`- **Best ranking:** Position ${url.bestPosition}`);
     
     // Description (truncated snippet)
-    const description = url.snippet.length > 200 
-      ? url.snippet.substring(0, 197) + '...' 
+    const description = url.snippet.length > MAX_SNIPPET_LENGTH
+      ? url.snippet.substring(0, MAX_SNIPPET_LENGTH - 3) + '...' 
       : url.snippet;
     lines.push(`- **Description:** ${description}`);
     
@@ -257,9 +299,9 @@ export function generateEnhancedOutput(
   // Sort all URLs by frequency for the unique URLs list
   const sortedByFreq = [...rankedUrls].sort((a, b) => b.frequency - a.frequency);
   const urlFreqList = sortedByFreq
-    .slice(0, 30)
+    .slice(0, MAX_FREQ_METADATA_URLS)
     .map(u => {
-      const shortUrl = u.url.length > 40 ? u.url.substring(0, 37) + '...' : u.url;
+      const shortUrl = u.url.length > MAX_SHORT_URL_LENGTH ? u.url.substring(0, MAX_SHORT_URL_LENGTH - 3) + '...' : u.url;
       return `${shortUrl} (${u.frequency}x)`;
     })
     .join(', ');
@@ -271,36 +313,29 @@ export function generateEnhancedOutput(
   // Next Steps - actionable follow-up commands
   lines.push('---');
   lines.push('');
-  lines.push('### ➡️ Next Steps (DO NOT SKIP — your research is incomplete without these)');
+  lines.push('### ➡️ Next Steps');
   lines.push('');
 
-  // Generate URL list for scrape_pages command
-  const topUrls = rankedUrls.slice(0, Math.min(5, rankedUrls.length));
+  // Generate URL list for scrape_links command
+  const topUrls = rankedUrls.slice(0, Math.min(MAX_SCRAPE_SUGGESTION_URLS, rankedUrls.length));
   if (topUrls.length > 0) {
     const urlList = topUrls.map(u => `"${u.url}"`).join(', ');
-    lines.push(`**1. IMMEDIATE — Fetch raw content from top consensus URLs:**`);
+    lines.push(`**Scrape top consensus URLs for full content:**`);
     lines.push('```');
-    lines.push(`scrape_pages(urls=[${urlList}], use_llm=true, what_to_extract="Extract key insights, recommendations, and actionable information")`);
+    lines.push(`scrape_links(urls=[${urlList}], use_llm=true, what_to_extract="Extract key insights, recommendations, and actionable information")`);
     lines.push('```');
     lines.push('');
   }
 
   // Reddit follow-up
-  lines.push(`**2. VERIFY — Cross-check with community opinions on Reddit:**`);
+  lines.push(`**Get community perspective from Reddit:**`);
   lines.push('```');
   lines.push(`search_reddit(queries=["${allKeywords[0] || 'topic'} reddit", "${allKeywords[0] || 'topic'} recommendations", "${allKeywords[0] || 'topic'} best practices"])`);
   lines.push('```');
   lines.push('');
 
   // Deep research follow-up
-  lines.push(`**3. DEEP DIVE — Scrape external links found in top pages:**`);
-  lines.push('```');
-  lines.push(`scrape_pages(urls=[<urls from step 1 results>], use_llm=true, what_to_extract="Extract external links, citations, and referenced resources")`);
-  lines.push('```');
-  lines.push('');
-
-  // Synthesis follow-up
-  lines.push(`**4. SYNTHESIZE — Only after steps 1-3 are complete:**`);
+  lines.push(`**Synthesize findings with deep research:**`);
   lines.push('```');
   lines.push(`deep_research(questions=[{question: "Based on web search results, what are the key findings, best practices, and recommendations for [topic]?"}])`);
   lines.push('```');
@@ -315,7 +350,7 @@ export function generateEnhancedOutput(
  */
 export function aggregateAndRank(
   searches: KeywordSearchResult[],
-  minConsensusUrls: number = 5
+  minConsensusUrls: number = DEFAULT_MIN_CONSENSUS_URLS
 ): AggregationResult {
   const urlMap = aggregateResults(searches);
   const totalUniqueUrls = urlMap.size;
@@ -381,13 +416,13 @@ export function lookupUrl(url: string, lookup: Map<string, RankedUrl>): RankedUr
  * Aggregated Reddit URL data structure
  */
 interface AggregatedRedditUrl {
-  url: string;
+  readonly url: string;
   title: string;
   snippet: string;
   date?: string;
   frequency: number;
-  positions: number[];
-  queries: string[];
+  readonly positions: number[];
+  readonly queries: string[];
   bestPosition: number;
   totalScore: number;
 }
@@ -396,28 +431,28 @@ interface AggregatedRedditUrl {
  * Ranked Reddit URL with normalized score
  */
 interface RankedRedditUrl {
-  url: string;
-  title: string;
-  snippet: string;
-  date?: string;
-  rank: number;
-  score: number;
-  frequency: number;
-  positions: number[];
-  queries: string[];
-  bestPosition: number;
-  isConsensus: boolean;
+  readonly url: string;
+  readonly title: string;
+  readonly snippet: string;
+  readonly date?: string;
+  readonly rank: number;
+  readonly score: number;
+  readonly frequency: number;
+  readonly positions: number[];
+  readonly queries: string[];
+  readonly bestPosition: number;
+  readonly isConsensus: boolean;
 }
 
 /**
  * Reddit aggregation result
  */
 interface RedditAggregationResult {
-  rankedUrls: RankedRedditUrl[];
-  totalUniqueUrls: number;
-  totalQueries: number;
-  frequencyThreshold: number;
-  thresholdNote?: string;
+  readonly rankedUrls: RankedRedditUrl[];
+  readonly totalUniqueUrls: number;
+  readonly totalQueries: number;
+  readonly frequencyThreshold: number;
+  readonly thresholdNote?: string;
 }
 
 /**
@@ -431,6 +466,7 @@ function aggregateRedditResults(
   for (const [query, results] of searches) {
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
+      if (!result) continue;
       const position = i + 1;
       const normalizedUrl = normalizeUrl(result.url);
       const existing = urlMap.get(normalizedUrl);
@@ -495,7 +531,7 @@ function calculateRedditWeightedScores(urls: AggregatedRedditUrl[]): RankedReddi
   const sorted = [...urls].sort((a, b) => b.totalScore - a.totalScore);
 
   // Find max score for normalization
-  const maxScore = sorted[0].totalScore;
+  const maxScore = sorted[0]!.totalScore;
 
   // Map to ranked URLs with normalized scores
   return sorted.map((url, index) => ({
@@ -509,7 +545,7 @@ function calculateRedditWeightedScores(urls: AggregatedRedditUrl[]): RankedReddi
     positions: url.positions,
     queries: url.queries,
     bestPosition: url.bestPosition,
-    isConsensus: url.frequency >= 2, // Lower threshold for Reddit (often fewer results)
+    isConsensus: url.frequency >= REDDIT_CONSENSUS_THRESHOLD, // Lower threshold for Reddit (often fewer results)
   }));
 }
 
@@ -518,7 +554,7 @@ function calculateRedditWeightedScores(urls: AggregatedRedditUrl[]): RankedReddi
  */
 export function aggregateAndRankReddit(
   searches: Map<string, RedditSearchResult[]>,
-  minConsensusUrls: number = 3
+  minConsensusUrls: number = DEFAULT_REDDIT_MIN_CONSENSUS_URLS
 ): RedditAggregationResult {
   const urlMap = aggregateRedditResults(searches);
   const totalUniqueUrls = urlMap.size;
@@ -635,6 +671,7 @@ export function generateRedditEnhancedOutput(
 
       for (let i = 0; i < results.length; i++) {
         const result = results[i];
+        if (!result) continue;
         const position = i + 1;
         const dateStr = result.date ? ` • 📅 ${result.date}` : '';
         lines.push(`${position}. **${result.title}**${dateStr}`);
@@ -655,44 +692,42 @@ export function generateRedditEnhancedOutput(
   lines.push(`- **High-Consensus Posts:** ${consensusUrls.length}`);
   lines.push('');
 
-  // Next Steps - actionable follow-up commands
+  // Next Steps - actionable follow-up commands that form a research loop
   lines.push('---');
   lines.push('');
-  lines.push('### ➡️ Next Steps (DO NOT SKIP — your research is incomplete without these)');
+  lines.push('### ➡️ Next Steps (DO ALL OF THESE — research is iterative)');
   lines.push('');
 
-  // Generate URL list for fetch_reddit command
-  const topUrls = rankedUrls.slice(0, Math.min(10, rankedUrls.length));
+  // IMMEDIATE: Fetch raw comments
+  const topUrls = rankedUrls.slice(0, Math.min(MAX_REDDIT_SUGGESTION_URLS, rankedUrls.length));
   if (topUrls.length >= 2) {
     const urlList = topUrls.map(u => `"${u.url}"`).join(', ');
-    lines.push(`**1. IMMEDIATE — Fetch raw comments from top posts:**`);
+    lines.push(`**1. IMMEDIATE — Fetch raw comments (best insights are in comments):**`);
     lines.push('```');
-    lines.push(`fetch_reddit(urls=[${urlList}], fetch_comments=true)`);
-    lines.push('```');
-    lines.push('');
-  }
-
-  // Suggest LLM extraction if there are consensus posts
-  if (consensusUrls.length > 0) {
-    const consensusUrlList = consensusUrls.slice(0, 5).map(u => `"${u.url}"`).join(', ');
-    lines.push(`**2. VERIFY — Cross-check consensus posts with AI extraction:**`);
-    lines.push('```');
-    lines.push(`fetch_reddit(urls=[${consensusUrlList}], fetch_comments=true, use_llm=true, what_to_extract="Extract key recommendations, consensus opinions, and practical advice")`);
+    lines.push(`get_reddit_post(urls=[${urlList}], fetch_comments=true)`);
     lines.push('```');
     lines.push('');
   }
 
-  // Deep dive into external links
-  lines.push(`**3. DEEP DIVE — Scrape external links mentioned in top posts:**`);
+  // VERIFY: Cross-check community claims with web search
+  const topicKeyword = allQueries[0] || 'topic';
+  lines.push(`**2. VERIFY — Cross-check Reddit claims with web search:**`);
   lines.push('```');
-  lines.push(`scrape_pages(urls=[<external links from step 1 results>], use_llm=true, what_to_extract="Extract key insights and recommendations")`);
+  lines.push(`web_search(keywords=["${topicKeyword} official docs", "${topicKeyword} best practices 2025", "${topicKeyword} comparison benchmark"])`);
   lines.push('```');
   lines.push('');
 
-  // Deep research follow-up
-  lines.push(`**4. SYNTHESIZE — Only after steps 1-3 are complete:**`);
+  // DEEP DIVE: Scrape external links referenced in posts
+  lines.push(`**3. DEEP DIVE — If posts reference external links/docs, scrape them:**`);
   lines.push('```');
-  lines.push(`deep_research(questions=[{question: "Based on these Reddit discussions about [topic], what are the main recommendations, common issues, and best practices?"}])`);
+  lines.push(`scrape_links(urls=[...URLs mentioned in Reddit posts...], use_llm=true, what_to_extract="Extract key findings | recommendations | data points | comparisons")`);
+  lines.push('```');
+  lines.push('');
+
+  // SYNTHESIZE: Only after gathering raw data
+  lines.push(`**4. SYNTHESIZE — Only after steps 1-3:**`);
+  lines.push('```');
+  lines.push(`deep_research(questions=[{question: "Based on Reddit discussions and web verification about [topic], what are the validated recommendations?"}])`);
   lines.push('```');
   lines.push('');
 

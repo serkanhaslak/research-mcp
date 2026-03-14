@@ -8,18 +8,17 @@
  * Processes items from the input array through the mapper function,
  * running at most `concurrency` tasks simultaneously.
  *
- * NEVER throws - if the mapper throws, the error propagates per-item
- * (caller should handle via try/catch in mapper or use Promise.allSettled pattern).
- *
  * @param items - Array of items to process
  * @param mapper - Async function to apply to each item
  * @param concurrency - Maximum number of concurrent tasks (default: 6)
+ * @param signal - Optional AbortSignal to cancel remaining work
  * @returns Array of results in the same order as input items
  */
 export async function pMap<T, R>(
-  items: T[],
+  items: readonly T[],
   mapper: (item: T, index: number) => Promise<R>,
-  concurrency: number = 6
+  concurrency: number = 6,
+  signal?: AbortSignal,
 ): Promise<R[]> {
   if (items.length === 0) return [];
 
@@ -28,11 +27,21 @@ export async function pMap<T, R>(
 
   const results: R[] = new Array(items.length);
   let nextIndex = 0;
+  const internalAbort = new AbortController();
 
   async function worker(): Promise<void> {
-    while (nextIndex < items.length) {
+    while (true) {
+      if (signal?.aborted || internalAbort.signal.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
       const index = nextIndex++;
-      results[index] = await mapper(items[index], index);
+      if (index >= items.length) break;
+      try {
+        results[index] = await mapper(items[index]!, index);
+      } catch (err) {
+        internalAbort.abort(); // Signal other workers to stop picking up new work
+        throw err;
+      }
     }
   }
 
@@ -53,12 +62,14 @@ export async function pMap<T, R>(
  * @param items - Array of items to process
  * @param mapper - Async function to apply to each item
  * @param concurrency - Maximum number of concurrent tasks (default: 6)
+ * @param signal - Optional AbortSignal to cancel remaining work
  * @returns Array of PromiseSettledResult in the same order as input items
  */
 export async function pMapSettled<T, R>(
-  items: T[],
+  items: readonly T[],
   mapper: (item: T, index: number) => Promise<R>,
-  concurrency: number = 6
+  concurrency: number = 6,
+  signal?: AbortSignal,
 ): Promise<PromiseSettledResult<R>[]> {
   if (items.length === 0) return [];
 
@@ -69,9 +80,10 @@ export async function pMapSettled<T, R>(
 
   async function worker(): Promise<void> {
     while (nextIndex < items.length) {
+      if (signal?.aborted) break;
       const index = nextIndex++;
       try {
-        const value = await mapper(items[index], index);
+        const value = await mapper(items[index]!, index);
         results[index] = { status: 'fulfilled', value };
       } catch (reason) {
         results[index] = { status: 'rejected', reason };
@@ -85,5 +97,13 @@ export async function pMapSettled<T, R>(
   }
 
   await Promise.all(workers);
+
+  // Fill any unprocessed items after abort
+  for (let i = 0; i < items.length; i++) {
+    if (results[i] === undefined) {
+      results[i] = { status: 'rejected', reason: new DOMException('Aborted', 'AbortError') };
+    }
+  }
+
   return results;
 }

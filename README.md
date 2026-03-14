@@ -1,259 +1,263 @@
-# mcp-researchpowerpack
+<h1 align="center">🔬 MCP Research Powerpack</h1>
 
-Five parallel research tools in one MCP server: Google search, Reddit mining, web scraping with AI extraction, deep research with web search, and Reddit post fetching with comment analysis.
+<p align="center">
+  <strong>Five research tools for AI assistants — search, scrape, mine Reddit, and synthesize with LLMs.</strong>
+</p>
 
-All tools run through [OpenRouter](https://openrouter.ai) for AI capabilities. The server uses **x-ai/grok-4.1-fast** for deep research (with web search) and **openai/gpt-oss-120b:nitro** for content extraction.
+<p align="center">
+  <a href="https://www.npmjs.com/package/mcp-research-powerpack"><img src="https://img.shields.io/npm/v/mcp-research-powerpack.svg?style=flat-square&color=cb3837" alt="npm"></a>
+  <a href="https://www.npmjs.com/package/mcp-research-powerpack"><img src="https://img.shields.io/npm/dm/mcp-research-powerpack.svg?style=flat-square&color=blue" alt="downloads"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D20-93450a.svg?style=flat-square" alt="node"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-grey.svg?style=flat-square" alt="license"></a>
+  <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-compatible-5a67d8.svg?style=flat-square" alt="MCP"></a>
+</p>
 
-[![npm](https://img.shields.io/npm/v/mcp-researchpowerpack)](https://www.npmjs.com/package/mcp-researchpowerpack)
-[![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+<p align="center">
+  <code>npx mcp-research-powerpack</code>
+</p>
+
+---
+
+An [MCP](https://modelcontextprotocol.io) server that gives Claude, Cursor, Windsurf, and any MCP-compatible AI assistant a complete research toolkit. Google search, Reddit deep-dives, web scraping with AI extraction, and multi-model deep research — all as tools that chain into each other.
+
+Zero config to start. Each API key you add unlocks more capabilities.
+
+## Tools
+
+| Tool | What it does | Requires |
+|:-----|:-------------|:---------|
+| **`web_search`** | Parallel Google search across 3–100 keywords with CTR-weighted ranking and consensus detection | `SERPER_API_KEY` |
+| **`search_reddit`** | Same search engine filtered to reddit.com — 10–50 queries in parallel | `SERPER_API_KEY` |
+| **`get_reddit_post`** | Fetch 2–50 Reddit posts with full comment trees, smart comment budget allocation | `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` |
+| **`scrape_links`** | Scrape 1–50 URLs with JS rendering fallback, HTML→Markdown, optional AI extraction | `SCRAPEDO_API_KEY` |
+| **`deep_research`** | Send questions to research-capable models (Grok, Gemini) with web search, file attachments | `OPENROUTER_API_KEY` |
+
+Tools are designed to **chain**: `web_search` → `scrape_links` → `search_reddit` → `get_reddit_post` → `deep_research` for synthesis. Each tool suggests the next logical step in its output.
 
 ## Quick Start
 
-### npx (no install)
+### Claude Desktop / Claude Code
+
+Add to your MCP config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
     "research-powerpack": {
       "command": "npx",
-      "args": ["-y", "mcp-researchpowerpack"],
+      "args": ["-y", "mcp-research-powerpack"],
       "env": {
-        "OPENROUTER_API_KEY": "sk-or-...",
-        "SERPER_API_KEY": "...",
-        "SCRAPEDO_API_KEY": "...",
-        "REDDIT_CLIENT_ID": "...",
-        "REDDIT_CLIENT_SECRET": "..."
+        "SERPER_API_KEY": "your-key-here",
+        "OPENROUTER_API_KEY": "your-key-here"
       }
     }
   }
 }
 ```
 
-### Global install
+### Cursor
 
-```bash
-npm install -g mcp-researchpowerpack
-```
-
-Then add to your MCP client config:
+Add to `.cursor/mcp.json` in your project:
 
 ```json
 {
   "mcpServers": {
     "research-powerpack": {
-      "command": "mcp-researchpowerpack",
+      "command": "npx",
+      "args": ["-y", "mcp-research-powerpack"],
       "env": {
-        "OPENROUTER_API_KEY": "sk-or-...",
-        "SERPER_API_KEY": "...",
-        "SCRAPEDO_API_KEY": "...",
-        "REDDIT_CLIENT_ID": "...",
-        "REDDIT_CLIENT_SECRET": "..."
+        "SERPER_API_KEY": "your-key-here"
       }
     }
   }
 }
 ```
 
-## Tools
+### From Source
 
-### search_google
-
-Parallel Google search across 3-100 keywords with CTR-weighted ranking and consensus detection.
-
-```
-search_google({ keywords: ["MCP protocol", "model context protocol tutorial", "MCP vs function calling"] })
-```
-
-- 10 results per keyword, aggregated by frequency and position
-- Supports operators: `site:`, `"exact phrase"`, `-exclude`, `filetype:`, `OR`
-- **Requires:** `SERPER_API_KEY`
-
-### search_reddit
-
-Discovery search across 3-50 queries, returns Reddit post URLs for `fetch_reddit`.
-
-```
-search_reddit({ queries: ["best MCP servers 2025", "MCP setup guide", "r/ClaudeAI MCP"] })
+```bash
+git clone https://github.com/yigitkonur/mcp-research-powerpack.git
+cd mcp-research-powerpack
+pnpm install && pnpm build
+pnpm start
 ```
 
-- Auto-adds `site:reddit.com`
-- Supports: `intitle:`, `"exact"`, `OR`, `-exclude`
-- **Requires:** `SERPER_API_KEY`
+### HTTP Transport
 
-### fetch_reddit
-
-Fetch 2-50 Reddit posts with full comment trees and optional AI summarization.
-
-```
-fetch_reddit({
-  urls: ["https://reddit.com/r/ClaudeAI/comments/...", "https://reddit.com/r/LocalLLaMA/comments/..."],
-  fetch_comments: true,
-  max_comments: 100
-})
+```bash
+MCP_TRANSPORT=http MCP_PORT=3000 npx mcp-research-powerpack
 ```
 
-- Smart comment budget: 1000 total distributed across posts (2 posts = 500 each, 10 = 100 each)
-- Phase 2 redistribution: unused comment budget from short posts flows to truncated ones
-- Optional `use_llm: true` for AI synthesis of discussions
-- **Requires:** `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET`
-
-### scrape_pages
-
-Scrape 1-50 URLs with optional AI-powered content extraction.
-
-```
-scrape_pages({
-  urls: ["https://docs.example.com/api", "https://example.com/pricing"],
-  use_llm: true,
-  what_to_extract: "pricing tiers | API limits | authentication methods"
-})
-```
-
-- `use_llm: true` (default) — strips nav/ads/footers, extracts only what you specify
-- 32K token budget distributed across URLs
-- Model override: `"openai/gpt-oss-120b:nitro"` (default) or `"x-ai/grok-4.1-fast"` (adds web search)
-- 3-mode scraper fallback: basic -> JS rendering -> JS + US geo
-- **Requires:** `SCRAPEDO_API_KEY` (+ `OPENROUTER_API_KEY` for `use_llm`)
-
-### deep_research
-
-AI-powered research with web search, 1-10 questions processed in parallel.
-
-```
-deep_research({
-  questions: [{
-    question: "GOAL: Compare X vs Y. WHY: Choosing a tool. KNOWN: X is open-source. QUESTIONS: 1. Performance? 2. Cost? 3. Community?",
-    file_attachments: [{ path: "/abs/path/to/file.ts", start_line: 10, end_line: 50 }]
-  }]
-})
-```
-
-- 32K token budget split across questions
-- Uses **x-ai/grok-4.1-fast** with live web search (fallback: **openai/gpt-oss-120b:nitro**)
-- File attachments for code-related questions (bugs, perf, architecture)
-- **Requires:** `OPENROUTER_API_KEY`
+Exposes `/mcp` endpoint (POST/GET/DELETE with session headers) and `/health`.
 
 ## API Keys
 
-| Key | Tools | Free Tier | Get It |
-|-----|-------|-----------|--------|
-| `SERPER_API_KEY` | search_google, search_reddit | 2,500 queries/mo | [serper.dev](https://serper.dev) |
-| `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` | fetch_reddit | Unlimited | [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) (select "script") |
-| `SCRAPEDO_API_KEY` | scrape_pages | 1,000 credits | [scrape.do](https://scrape.do) |
-| `OPENROUTER_API_KEY` | deep_research, scrape_pages (use_llm) | Pay-as-you-go | [openrouter.ai/keys](https://openrouter.ai/keys) |
+Each key unlocks a capability. Missing keys silently disable their tools — the server never crashes.
 
-All keys are optional. The server starts with whatever you provide and disables tools whose keys are missing.
+| Variable | Enables | Free Tier |
+|:---------|:--------|:----------|
+| `SERPER_API_KEY` | `web_search`, `search_reddit` | 2,500 searches/mo — [serper.dev](https://serper.dev) |
+| `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` | `get_reddit_post` | Unlimited — [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) (script type) |
+| `SCRAPEDO_API_KEY` | `scrape_links` | 1,000 credits/mo — [scrape.do](https://scrape.do) |
+| `OPENROUTER_API_KEY` | `deep_research`, LLM extraction | Pay-per-token — [openrouter.ai](https://openrouter.ai) |
+| `CEREBRAS_API_KEY` | Cerebras LLM extraction | — |
+| `USE_CEREBRAS` | Enable Cerebras for extraction (set `true`) | `false` |
 
 ## Configuration
 
-Optional environment variables for tuning:
+Optional tuning via environment variables:
 
 | Variable | Default | Description |
-|----------|---------|-------------|
-| `RESEARCH_MODEL` | `x-ai/grok-4.1-fast` | Primary model for deep_research |
-| `RESEARCH_FALLBACK_MODEL` | `openai/gpt-oss-120b:nitro` | Fallback when primary fails |
-| `LLM_EXTRACTION_MODEL` | `openai/gpt-oss-120b:nitro` | Default model for scrape_pages extraction |
-| `API_TIMEOUT_MS` | `1800000` (30 min) | Request timeout |
-| `DEFAULT_REASONING_EFFORT` | `high` | Reasoning effort: low, medium, high |
-| `DEFAULT_MAX_URLS` | `100` | Max search results per research question |
-| `LLM_ENABLE_REASONING` | `true` | Enable reasoning in extraction |
-| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | OpenRouter endpoint override |
+|:---------|:--------|:------------|
+| `RESEARCH_MODEL` | `x-ai/grok-4-fast` | Primary deep research model |
+| `RESEARCH_FALLBACK_MODEL` | `google/gemini-2.5-flash` | Fallback when primary fails |
+| `LLM_EXTRACTION_MODEL` | `openai/gpt-oss-120b:nitro` | Model for scrape/reddit AI extraction |
+| `DEFAULT_REASONING_EFFORT` | `high` | Research depth: `low`, `medium`, `high` |
+| `DEFAULT_MAX_URLS` | `100` | Max search results per research question (10–200) |
+| `API_TIMEOUT_MS` | `1800000` | Request timeout in ms (default: 30 min) |
+| `MCP_TRANSPORT` | `stdio` | Transport mode: `stdio` or `http` |
+| `MCP_PORT` | `3000` | Port for HTTP mode |
+| `USE_CEREBRAS` | `false` | Set to `true` to use Cerebras for extraction instead of OpenRouter |
+| `CEREBRAS_API_KEY` | — | API key for Cerebras cloud — [cloud.cerebras.ai](https://cloud.cerebras.ai) |
 
-## Backward Compatibility
+### Cerebras Support
 
-Old tool names are aliased automatically:
+When `USE_CEREBRAS=true` and `CEREBRAS_API_KEY` are set, the `scrape_links` tool uses Cerebras (Z.ai GLM 4.7) for AI content extraction instead of OpenRouter. This provides:
 
-| Old Name | New Name |
-|----------|----------|
-| `web_search` | `search_google` |
-| `scrape_links` | `scrape_pages` |
-| `get_reddit_post` | `fetch_reddit` |
+- **Ultra-fast extraction** — Cerebras inference is optimized for speed
+- **Independent from OpenRouter** — extraction works even without `OPENROUTER_API_KEY`
+- **Automatic fallback** — if Cerebras is not configured, falls back to OpenRouter
+
+```bash
+# Enable Cerebras for extraction
+USE_CEREBRAS=true CEREBRAS_API_KEY=your-key npx mcp-research-powerpack
+```
+
+### Network Resilience
+
+All LLM API calls include built-in stability protections:
+
+- **Request deadlines** — hard timeout prevents calls from hanging indefinitely
+- **Stall detection** — if no response arrives within a threshold, the request is aborted and retried
+- **Exponential backoff** — transient failures (429, 5xx) retry with jitter to avoid thundering herd
+- **Connection loss recovery** — network errors (ECONNRESET, ECONNREFUSED) trigger automatic retry
+- **Graceful degradation** — all tools return structured errors instead of crashing
+
+## How It Works
+
+### Search Ranking
+
+Results from multiple queries are deduplicated by normalized URL and scored using **CTR-weighted position values** (position 1 = 100.0, position 10 = 12.56). URLs appearing across multiple queries get a consensus marker. Frequency threshold starts at ≥3, falls back to ≥2, then ≥1 to ensure results.
+
+### Reddit Comment Budget
+
+Global budget of **1,000 comments**, max 200 per post. After the first pass, surplus from posts with fewer comments is redistributed to truncated posts in a second fetch pass.
+
+### Scraping Pipeline
+
+**Three-mode fallback** per URL: basic → JS rendering → JS + US geo-targeting. Results go through HTML→Markdown conversion (Turndown), then optional AI extraction with a 100K char input cap and 8,000 token output per URL.
+
+### Deep Research
+
+**32,000 token budget** divided across questions (1 question = 32K, 10 questions = 3.2K each). Gemini models get `google_search` tool access. Grok/Perplexity get `search_parameters` with citations. Primary model fails → automatic fallback to secondary model.
+
+### File Attachments
+
+`deep_research` can read **local files** and include them as context. Files over 600 lines are smart-truncated (first 500 + last 100 lines). Line ranges supported. Line numbers preserved in output.
+
+## Concurrency
+
+| Operation | Parallel Limit |
+|:----------|:---------------|
+| Web search keywords | 8 |
+| Reddit search queries | 8 |
+| Reddit post fetches per batch | 5 (batches of 10) |
+| URL scraping per batch | 10 (batches of 30) |
+| LLM extraction | 3 |
+| Deep research questions | 3 |
+
+All clients use **manual retry with exponential backoff and jitter**. The OpenAI SDK's built-in retry is disabled (`maxRetries: 0`).
+
+## Architecture
+
+```
+src/
+├── index.ts                    Entry point — STDIO + HTTP transport, graceful shutdown
+├── worker.ts                   Cloudflare Workers entry (Durable Objects)
+├── config/
+│   ├── index.ts                Env parsing, capability detection, lazy Proxy config
+│   ├── loader.ts               YAML → Zod → JSON Schema pipeline
+│   └── yaml/tools.yaml         Single source of truth for tool definitions
+├── schemas/                    Zod input validation (deep-research, scrape-links, web-search)
+├── tools/
+│   ├── registry.ts             Tool lookup → capability check → validate → execute
+│   ├── search.ts               web_search handler
+│   ├── reddit.ts               search_reddit + get_reddit_post handlers
+│   ├── scrape.ts               scrape_links handler
+│   └── research.ts             deep_research handler
+├── clients/
+│   ├── search.ts               Google Serper API client
+│   ├── reddit.ts               Reddit OAuth + comment tree parser
+│   ├── scraper.ts              Scrape.do client with fallback modes
+│   └── research.ts             OpenRouter client with model-specific handling
+├── services/
+│   ├── llm-processor.ts        Shared LLM extraction (singleton OpenAI client)
+│   ├── markdown-cleaner.ts     HTML → Markdown via Turndown
+│   └── file-attachment.ts      Local file reading with line ranges
+└── utils/
+    ├── retry.ts                Shared backoff + retry constants
+    ├── concurrency.ts          Bounded parallel execution (pMap, pMapSettled)
+    ├── url-aggregator.ts       CTR-weighted scoring + consensus detection
+    ├── errors.ts               Error classification + structured errors
+    ├── logger.ts               MCP logging protocol
+    └── response.ts             Standardized 70/20/10 output formatting
+```
+
+## Deploy
+
+### Cloudflare Workers
+
+```bash
+npx wrangler deploy
+```
+
+Uses Durable Objects with SQLite storage. YAML-based tool definitions are replaced with inline definitions since there's no filesystem in Workers.
+
+### npm
+
+Published as [`mcp-research-powerpack`](https://www.npmjs.com/package/mcp-research-powerpack). Binary names: `mcp-research-powerpack`, `research-powerpack-mcp`.
 
 ## Development
 
 ```bash
-git clone https://github.com/yigitkonur/mcp-researchpowerpack.git
-cd mcp-researchpowerpack
-pnpm install
-cp .env.example .env   # fill in your API keys
-pnpm build             # tsc + copy YAML config
-pnpm dev               # run with tsx (hot reload)
+pnpm install          # Install dependencies
+pnpm dev              # Run with tsx (live TypeScript)
+pnpm build            # Compile to dist/
+pnpm typecheck        # Type-check without emitting
+pnpm start            # Run compiled output
 ```
 
-### Project Structure
-
-```
-src/
-├── index.ts              # MCP server entry (stdio + HTTP transports)
-├── version.ts            # Version from package.json
-├── config/
-│   ├── index.ts          # All constants, env parsing, capability detection
-│   ├── loader.ts         # YAML -> Zod -> MCP schema generator
-│   └── yaml/tools.yaml   # Tool definitions (descriptions, params, limits)
-├── schemas/              # Zod validation schemas
-│   ├── deep-research.ts
-│   ├── scrape-links.ts
-│   └── web-search.ts
-├── tools/
-│   ├── registry.ts       # Tool registry, alias resolution, execution pipeline
-│   ├── definitions.ts    # YAML -> MCP tool list
-│   ├── research.ts       # deep_research handler
-│   ├── scrape.ts         # scrape_pages handler
-│   ├── search.ts         # search_google handler
-│   ├── reddit.ts         # search_reddit + fetch_reddit handlers
-│   └── utils.ts          # Token budgets, formatting helpers
-├── clients/
-│   ├── research.ts       # OpenRouter client (Grok/Gemini routing, retry, fallback)
-│   ├── scraper.ts        # Scrape.do client (3-mode fallback, retry)
-│   ├── search.ts         # Serper.dev client (batch search, Reddit search)
-│   └── reddit.ts         # Reddit OAuth client (comment redistribution)
-├── services/
-│   ├── llm-processor.ts  # LLM extraction (model routing, retry)
-│   ├── markdown-cleaner.ts # HTML -> Markdown (Turndown)
-│   └── file-attachment.ts  # File reader for research attachments
-└── utils/
-    ├── errors.ts         # Error classification and retry logic
-    ├── concurrency.ts    # pMap / pMapSettled (bounded concurrency)
-    ├── url-aggregator.ts # CTR-weighted URL ranking
-    ├── response.ts       # 70/20/10 response formatting
-    ├── logger.ts         # MCP structured logging
-    └── markdown-formatter.ts
-```
-
-### Key Design Decisions
-
-- **Never crashes**: Every handler catches all errors and returns structured error responses
-- **Capability-based degradation**: Missing API keys disable tools gracefully, not crash the server
-- **Bounded concurrency**: All parallel operations use `pMap` with limits (3 for LLM, 10 for Reddit, 30 for scraping)
-- **Model routing**: xAI models get `search_parameters`, Gemini models get `google_search` tool, others get standard completions
-- **Two allowed models**: `openai/gpt-oss-120b:nitro` for extraction, `x-ai/grok-4.1-fast` for research with web search
-
-## Publishing
-
-This package uses GitHub Actions with npm OIDC provenance for publishing.
-
-### Setup (one-time)
-
-1. Create an npm granular access token for `mcp-researchpowerpack` at [npmjs.com/settings/tokens](https://www.npmjs.com/settings/tokens/granular-access-tokens/new)
-2. Add it as `NPM_TOKEN` secret in the GitHub repo: Settings -> Secrets -> Actions -> New repository secret
-3. Push to `main` — the CI workflow auto-bumps the version and publishes with provenance
-
-### Manual publish
+### Testing
 
 ```bash
-pnpm build
-npm publish --access public --provenance
+pnpm test:web-search     # Test web search tool
+pnpm test:reddit-search  # Test Reddit search
+pnpm test:scrape-links   # Test scraping
+pnpm test:deep-research  # Test deep research
+pnpm test:all            # Run all tests
+pnpm test:check          # Check environment setup
 ```
 
-### CI Workflow
+## Contributing
 
-On every push to `main`:
-1. Installs dependencies, builds TypeScript
-2. Checks if current version exists on npm
-3. If it exists: auto-bumps patch version, commits with `[skip ci]`, pushes tag
-4. Publishes with `--provenance` (OIDC attestation from GitHub Actions)
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes
+4. Run `pnpm typecheck && pnpm build` to verify
+5. Commit (`git commit -m 'feat: add amazing feature'`)
+6. Push to your branch (`git push origin feature/amazing-feature`)
+7. Open a Pull Request
 
 ## License
 
-MIT
+[MIT](https://opensource.org/licenses/MIT) © [Yiğit Konur](https://github.com/yigitkonur)

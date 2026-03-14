@@ -7,21 +7,31 @@
  * - 10% Next Steps: Actionable follow-up commands
  */
 
+/** Default maximum items to display in list formatting */
+export const DEFAULT_MAX_ITEMS = 20 as const;
+
+/** Maximum snippet length before truncation in URL aggregator output */
+export const MAX_SNIPPET_LENGTH = 200 as const;
+
+/** Duration thresholds in milliseconds */
+const SECONDS_MS = 1_000 as const;
+const MINUTES_MS = 60_000 as const;
+
 // ============================================================================
 // Success Response Formatter
 // ============================================================================
 
 export interface SuccessOptions {
   /** Title/header for the response */
-  title: string;
+  readonly title: string;
   /** Summary section (70% of content) */
-  summary: string;
+  readonly summary: string;
   /** Optional data section (20% of content) */
-  data?: string;
+  readonly data?: string;
   /** Optional next steps (10% of content) */
-  nextSteps?: string[];
+  readonly nextSteps?: string[];
   /** Optional metadata footer */
-  metadata?: Record<string, string | number>;
+  readonly metadata?: Record<string, string | number>;
 }
 
 /**
@@ -48,10 +58,8 @@ export function formatSuccess(opts: SuccessOptions): string {
   if (opts.nextSteps?.length) {
     parts.push('');
     parts.push('---');
-    parts.push('**Next Steps (DO NOT SKIP — your research is incomplete without these):**');
-    opts.nextSteps.forEach((step, i) => parts.push(`${i + 1}. ${step}`));
-    parts.push('');
-    parts.push('> **Research quality check:** Before moving on, ask yourself — have you scraped the key URLs? Verified claims with independent sources? Checked community opinions? If not, your research has gaps. Use the steps above to fill them.');
+    parts.push('**Next Steps:**');
+    opts.nextSteps.forEach(step => parts.push(`→ ${step}`));
   }
 
   // Metadata footer
@@ -73,51 +81,62 @@ export function formatSuccess(opts: SuccessOptions): string {
 
 export interface ErrorOptions {
   /** Error code (e.g., RATE_LIMITED, TIMEOUT) */
-  code: string;
+  readonly code: string;
   /** Human-readable error message */
-  message: string;
+  readonly message: string;
   /** Is this error retryable? */
-  retryable?: boolean;
+  readonly retryable?: boolean;
   /** How to fix the error */
-  howToFix?: string[];
+  readonly howToFix?: string[];
   /** Alternative actions */
-  alternatives?: string[];
+  readonly alternatives?: string[];
   /** Tool name for context */
-  toolName?: string;
+  readonly toolName?: string;
 }
+
+/** Maximum length for error messages before truncation */
+const MAX_ERROR_MSG_LENGTH = 500 as const;
 
 /**
  * Format an error response with recovery guidance
+ * Designed to keep agents moving — every error includes actionable alternatives
  */
 export function formatError(opts: ErrorOptions): string {
   const parts: string[] = [];
 
+  // Truncate error message to prevent unbounded output
+  const message = opts.message.length > MAX_ERROR_MSG_LENGTH
+    ? opts.message.slice(0, MAX_ERROR_MSG_LENGTH - 3) + '...'
+    : opts.message;
+
   // Error header
   const prefix = opts.toolName ? `[${opts.toolName}] ` : '';
-  parts.push(`❌ ${prefix}${opts.code}: ${opts.message}`);
+  parts.push(`❌ ${prefix}${opts.code}: ${message}`);
 
-  // Retryable hint
+  // Retryable hint — be specific about what to do while waiting
   if (opts.retryable) {
     parts.push('');
-    parts.push('*This error is transient — retry the tool call immediately with the same parameters.*');
+    parts.push('*This error is retryable. Wait a moment and try again — but use the alternatives below in the meantime so research continues.*');
   }
 
   // How to fix
   if (opts.howToFix?.length) {
     parts.push('');
-    parts.push('**FIX THIS NOW:**');
+    parts.push('**How to Fix:**');
     opts.howToFix.forEach((step, i) => parts.push(`${i + 1}. ${step}`));
-    parts.push('');
-    parts.push('**Then call this tool again immediately with the corrected parameters.**');
   }
 
-  // Alternatives
+  // Alternatives — directive, not optional
   if (opts.alternatives?.length) {
     parts.push('');
-    parts.push('**MEANWHILE — keep researching with these tools (do ALL that apply):**');
+    parts.push('**DO THIS INSTEAD (don\'t stop researching):**');
     opts.alternatives.forEach((alt, i) => parts.push(`${i + 1}. ${alt}`));
+  }
+
+  // Continuation footer — push agents to keep going
+  if (opts.alternatives?.length) {
     parts.push('');
-    parts.push('> **Do not stop your research.** Use the alternatives above while this tool is unavailable.');
+    parts.push('> This tool failed but your research should NOT stop. Use the alternatives above to continue gathering information from other sources.');
   }
 
   return parts.join('\n');
@@ -129,19 +148,19 @@ export function formatError(opts: ErrorOptions): string {
 
 export interface BatchHeaderOptions {
   /** Batch operation title */
-  title: string;
+  readonly title: string;
   /** Total items attempted */
-  totalItems: number;
+  readonly totalItems: number;
   /** Successfully processed count */
-  successful: number;
+  readonly successful: number;
   /** Failed count */
-  failed: number;
+  readonly failed: number;
   /** Optional tokens per item */
-  tokensPerItem?: number;
+  readonly tokensPerItem?: number;
   /** Optional batch count */
-  batches?: number;
+  readonly batches?: number;
   /** Extra stats to include */
-  extras?: Record<string, string | number>;
+  readonly extras?: Record<string, string | number>;
 }
 
 /**
@@ -185,20 +204,20 @@ export function formatBatchHeader(opts: BatchHeaderOptions): string {
 
 export interface ListItem {
   /** Item title/name */
-  title: string;
+  readonly title: string;
   /** Optional description */
-  description?: string;
+  readonly description?: string;
   /** Optional metadata */
-  meta?: string;
+  readonly meta?: string;
   /** Optional URL */
-  url?: string;
+  readonly url?: string;
 }
 
 /**
  * Format a numbered list with optional metadata
  */
 export function formatList(items: ListItem[], options?: { maxItems?: number; numbered?: boolean }): string {
-  const max = options?.maxItems ?? 20;
+  const max = options?.maxItems ?? DEFAULT_MAX_ITEMS;
   const numbered = options?.numbered ?? true;
   const toShow = items.slice(0, max);
   const remaining = items.length - max;
@@ -233,9 +252,9 @@ export function formatList(items: ListItem[], options?: { maxItems?: number; num
  * Format duration in human-readable form
  */
 export function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${(ms / 60000).toFixed(1)}m`;
+  if (ms < SECONDS_MS) return `${ms}ms`;
+  if (ms < MINUTES_MS) return `${(ms / SECONDS_MS).toFixed(1)}s`;
+  return `${(ms / MINUTES_MS).toFixed(1)}m`;
 }
 
 // ============================================================================
