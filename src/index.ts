@@ -279,8 +279,11 @@ if (transportMode === 'http') {
 
   // Session TTL — reap idle sessions to prevent memory leaks from clients that disconnect without DELETE
   const SESSION_TTL_MS = Math.max(60_000,
-    parseInt(process.env.SESSION_TTL_MS || '', 10) || 2 * 60 * 60 * 1000); // default 2h
-  const SESSION_REAP_INTERVAL_MS = 5 * 60 * 1000; // sweep every 5 min
+    parseInt(process.env.SESSION_TTL_MS || '', 10) || 30 * 60 * 1000); // default 30min
+  const SESSION_REAP_INTERVAL_MS = 60 * 1000; // sweep every 1 min
+
+  // Max concurrent sessions — evict least-recently-used when exceeded
+  const MAX_SESSIONS = Math.max(1, parseInt(process.env.MAX_SESSIONS || '', 10) || 100);
 
   type SessionEntry = {
     transport: InstanceType<typeof StreamableHTTPServerTransport>;
@@ -295,6 +298,23 @@ if (transportMode === 'http') {
   async function closeSession(session: SessionEntry, sessionId: string): Promise<void> {
     sessions.delete(sessionId);
     try { await session.server.close(); } catch { /* ignore close errors */ }
+  }
+
+  /** Evict the least-recently-active session (oldest lastActivity). */
+  async function evictLeastRecentSession(): Promise<void> {
+    let oldestId: string | undefined;
+    let oldestTime = Infinity;
+    for (const [id, entry] of sessions) {
+      if (entry.lastActivity < oldestTime) {
+        oldestTime = entry.lastActivity;
+        oldestId = id;
+      }
+    }
+    if (oldestId) {
+      const session = sessions.get(oldestId)!;
+      console.error(`[HTTP] Evicting LRU session ${oldestId} (idle ${Math.round((Date.now() - oldestTime) / 1000)}s, active: ${sessions.size})`);
+      await closeSession(session, oldestId);
+    }
   }
 
   /** Handle GET /mcp — resume existing session's SSE stream. */
@@ -328,6 +348,13 @@ if (transportMode === 'http') {
     if (sessionId) {
       res.writeHead(400).end('Bad request — missing session ID');
       return;
+    }
+
+    // Evict oldest session if at capacity — better UX than rejecting with 503
+    if (sessions.size >= MAX_SESSIONS) {
+      try {
+        await evictLeastRecentSession();
+      } catch { /* never crash — eviction is best-effort */ }
     }
 
     // New session (initialization)
@@ -411,6 +438,7 @@ if (transportMode === 'http') {
 
   httpServer.listen(PORT, () => {
     console.error(`🚀 ${SERVER.NAME} v${SERVER.VERSION} listening on http://localhost:${PORT}/mcp`);
+    console.error(`   Sessions: max=${MAX_SESSIONS}, ttl=${SESSION_TTL_MS / 1000}s, reap_interval=${SESSION_REAP_INTERVAL_MS / 1000}s`);
   });
 
   // Session reaper — close sessions idle beyond SESSION_TTL_MS

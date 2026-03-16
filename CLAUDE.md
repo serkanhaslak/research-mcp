@@ -52,7 +52,8 @@ Note: `search_reddit` uses Google Serper (`site:reddit.com`), NOT the Reddit API
 - `RESEARCH_MODEL` — Primary deep research model (default: `x-ai/grok-4-fast`)
 - `RESEARCH_FALLBACK_MODEL` — Fallback when primary fails (default: `google/gemini-2.5-flash`)
 - `LLM_EXTRACTION_MODEL` — Extraction model (default: `openai/gpt-oss-120b:nitro`)
-- `SESSION_TTL_MS` — HTTP session idle timeout before reaping (default: 7,200,000 / 2h, minimum: 60,000 / 1min)
+- `SESSION_TTL_MS` — HTTP session idle timeout before reaping (default: 1,800,000 / 30min, minimum: 60,000 / 1min)
+- `MAX_SESSIONS` — Maximum concurrent HTTP sessions; oldest evicted when exceeded (default: 100, minimum: 1)
 - `API_TIMEOUT_MS` — Request timeout (default: 1,800,000 / 30min)
 - `DEFAULT_REASONING_EFFORT` — `low|medium|high` (default: `high`)
 - `DEFAULT_MAX_URLS` — Max search results per research question (default: 100, range: 10-200)
@@ -115,6 +116,7 @@ src/
 - **Model fallback** — `ResearchClient` tries primary model, then falls back to `RESEARCH_FALLBACK_MODEL` on failure.
 - **Scraper fallback** — `ScraperClient.scrapeWithFallback()` tries 3 modes: basic → JavaScript rendering → JavaScript + US geo-targeting.
 - **Gemini special handling** — models matching `google/gemini*` get `tools: [{type: 'google_search'}]` instead of `search_parameters`.
+- **HTTP session management** — LRU eviction when `MAX_SESSIONS` reached, 1-min reap interval for idle sessions beyond TTL. Evicts rather than rejects (503) for better UX.
 
 **Execution pipeline** (`tools/registry.ts`): lookup tool → check capability → validate with Zod → execute handler → transform response. Every step catches errors gracefully.
 
