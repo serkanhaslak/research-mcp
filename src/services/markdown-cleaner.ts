@@ -2,6 +2,7 @@
  * Markdown cleaner service using Turndown for HTML to Markdown conversion
  */
 import TurndownService from 'turndown';
+import { sanitizeForJson } from '../utils/sanitize.js';
 
 const turndown = new TurndownService({
   headingStyle: 'atx',
@@ -63,6 +64,9 @@ export class MarkdownCleaner {
 
       // Convert HTML to Markdown using Turndown
       content = turndown.turndown(content);
+
+      // Strip JSON-invalid characters (null bytes, control chars, unpaired surrogates)
+      content = sanitizeForJson(content);
 
       // Clean up whitespace
       content = content.replace(/\n{3,}/g, '\n\n');
