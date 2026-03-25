@@ -135,15 +135,19 @@ let pendingAuthPromise: Promise<string | null> | null = null;
 /**
  * Fetch a Reddit post's JSON from the API
  */
+export const COMMENT_SORTS = ['top', 'confidence', 'new', 'controversial', 'old', 'qa'] as const;
+export type CommentSort = typeof COMMENT_SORTS[number];
+
 async function fetchRedditJson(
   sub: string,
   id: string,
   maxComments: number,
   token: string,
   userAgent: string,
+  sort: CommentSort = 'top',
 ): Promise<RedditPostResponse> {
   const limit = Math.min(maxComments, 500);
-  const apiUrl = `${REDDIT_API_BASE}/r/${sub}/comments/${id}?sort=top&limit=${limit}&depth=10&raw_json=1`;
+  const apiUrl = `${REDDIT_API_BASE}/r/${sub}/comments/${id}?sort=${sort}&limit=${limit}&depth=10&raw_json=1`;
 
   const res = await fetchWithTimeout(apiUrl, {
     headers: {
@@ -254,13 +258,14 @@ async function processBatch(
   client: RedditClient,
   batchUrls: string[],
   maxComments: number,
+  sort: CommentSort = 'top',
 ): Promise<{ results: Map<string, PostResult | Error>; rateLimitHits: number }> {
   const results = new Map<string, PostResult | Error>();
   let rateLimitHits = 0;
 
   const batchResults = await pMapSettled(
     batchUrls,
-    url => client.getPost(url, maxComments),
+    url => client.getPost(url, maxComments, sort),
     5,
   );
 
@@ -289,6 +294,7 @@ async function redistributeComments(
   allResults: Map<string, PostResult | Error>,
   allocation: CommentAllocation,
   initialPerPost: number,
+  sort: CommentSort = 'top',
 ): Promise<number> {
   let surplus = 0;
   const truncatedUrls: string[] = [];
@@ -316,7 +322,7 @@ async function redistributeComments(
 
     const refetchResults = await pMapSettled(
       truncatedUrls,
-      url => client.getPost(url, newLimit),
+      url => client.getPost(url, newLimit, sort),
       5,
     );
 
@@ -446,7 +452,7 @@ export class RedditClient {
    * Get a single Reddit post with comments
    * Returns PostResult or throws Error (for use with Promise.allSettled)
    */
-  async getPost(url: string, maxComments = 100): Promise<PostResult> {
+  async getPost(url: string, maxComments = 100, sort: CommentSort = 'top'): Promise<PostResult> {
     const parsed = this.parseUrl(url);
     if (!parsed) {
       throw new Error(`Invalid Reddit URL format: ${url}`);
@@ -461,7 +467,7 @@ export class RedditClient {
 
     for (let attempt = 0; attempt < REDDIT.RETRY_COUNT; attempt++) {
       try {
-        const data = await fetchRedditJson(parsed.sub, parsed.id, maxComments, token, this.userAgent);
+        const data = await fetchRedditJson(parsed.sub, parsed.id, maxComments, token, this.userAgent, sort);
         const [postListing, commentListing] = data;
 
         const post = parsePostData(postListing, parsed.sub);
@@ -496,16 +502,16 @@ export class RedditClient {
     throw new Error(lastError?.message || 'Failed to fetch Reddit post after retries');
   }
 
-  async getPosts(urls: string[], maxComments = 100): Promise<Map<string, PostResult | Error>> {
+  async getPosts(urls: string[], maxComments = 100, sort: CommentSort = 'top'): Promise<Map<string, PostResult | Error>> {
     if (urls.length <= REDDIT.BATCH_SIZE) {
       const results = await pMap(
         urls,
-        u => this.getPost(u, maxComments).catch(e => e as Error),
+        u => this.getPost(u, maxComments, sort).catch(e => e as Error),
         5,
       );
       return new Map(urls.map((u, i) => [u, results[i]!]));
     }
-    return (await this.batchGetPosts(urls, maxComments)).results;
+    return (await this.batchGetPosts(urls, maxComments, true, undefined, sort)).results;
   }
 
   async batchGetPosts(
@@ -513,6 +519,7 @@ export class RedditClient {
     maxCommentsOverride?: number,
     fetchComments = true,
     onBatchComplete?: (batchNum: number, totalBatches: number, processed: number) => void,
+    sort: CommentSort = 'top',
   ): Promise<BatchPostResult> {
     const allResults = new Map<string, PostResult | Error>();
     let rateLimitHits = 0;
@@ -530,7 +537,7 @@ export class RedditClient {
 
       mcpLog('info', `Batch ${batchNum + 1}/${totalBatches} (${batchUrls.length} posts)`, 'reddit');
 
-      const batchResult = await processBatch(this, batchUrls, initialPerPost);
+      const batchResult = await processBatch(this, batchUrls, initialPerPost, sort);
       for (const [url, result] of batchResult.results) {
         allResults.set(url, result);
       }
@@ -551,7 +558,7 @@ export class RedditClient {
 
     // ── Phase 2: Redistribute surplus to truncated posts ──
     if (fetchComments && !maxCommentsOverride) {
-      rateLimitHits += await redistributeComments(this, allResults, allocation, initialPerPost);
+      rateLimitHits += await redistributeComments(this, allResults, allocation, initialPerPost, sort);
     }
 
     return { results: allResults, batchesProcessed: totalBatches, totalPosts: urls.length, rateLimitHits, commentAllocation: allocation };

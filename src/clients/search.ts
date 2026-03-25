@@ -19,6 +19,7 @@ import { mcpLog } from '../utils/logger.js';
 // ── Constants ──
 
 const SERPER_API_URL = 'https://google.serper.dev/search' as const;
+const SERPER_NEWS_API_URL = 'https://google.serper.dev/news' as const;
 const DEFAULT_RESULTS_PER_KEYWORD = 10 as const;
 const MAX_SEARCH_CONCURRENCY = 8 as const;
 const MAX_RETRIES = 3 as const;
@@ -55,6 +56,15 @@ export interface RedditSearchResult {
   readonly date?: string;
 }
 
+export interface NewsSearchResult {
+  readonly title: string;
+  readonly url: string;
+  readonly snippet: string;
+  readonly date?: string;
+  readonly source?: string;
+  readonly imageUrl?: string;
+}
+
 // ── Retry Configuration ──
 
 const SEARCH_RETRY_CONFIG = {
@@ -65,6 +75,14 @@ const SEARCH_RETRY_CONFIG = {
 } as const;
 
 const RETRYABLE_SEARCH_CODES = new Set([429, 500, 502, 503, 504]);
+
+// Date range to Serper tbs parameter mapping for news search
+const DATE_RANGE_TBS: Record<string, string> = {
+  day: 'qdr:d',
+  week: 'qdr:w',
+  month: 'qdr:m',
+  year: 'qdr:y',
+};
 
 // Pre-compiled regex patterns for Reddit search
 const REDDIT_SITE_REGEX = /site:\s*reddit\.com/i;
@@ -202,7 +220,7 @@ export class SearchClient {
    * Search multiple keywords in parallel
    * NEVER throws - always returns a valid response
    */
-  async searchMultiple(keywords: string[]): Promise<MultipleSearchResponse> {
+  async searchMultiple(keywords: string[], numResults?: number): Promise<MultipleSearchResponse> {
     const startTime = Date.now();
 
     if (keywords.length === 0) {
@@ -214,7 +232,8 @@ export class SearchClient {
       };
     }
 
-    const searchQueries = keywords.map(keyword => ({ q: keyword }));
+    const num = numResults ?? DEFAULT_RESULTS_PER_KEYWORD;
+    const searchQueries = keywords.map(keyword => ({ q: keyword, num }));
     const { data, error } = await executeSearchWithRetry(
       this.apiKey,
       searchQueries,
@@ -240,12 +259,22 @@ export class SearchClient {
    * Search Reddit via Google (adds site:reddit.com automatically)
    * NEVER throws - returns empty array on failure
    */
-  async searchReddit(query: string, dateAfter?: string): Promise<RedditSearchResult[]> {
+  async searchReddit(query: string, dateAfter?: string, subreddits?: string[]): Promise<RedditSearchResult[]> {
     if (!query?.trim()) {
       return [];
     }
 
-    let q = query.replace(REDDIT_SITE_REGEX, '').trim() + ' site:reddit.com';
+    let siteFilter: string;
+    if (subreddits && subreddits.length > 0) {
+      // Target specific subreddits with OR operator
+      siteFilter = subreddits.length === 1
+        ? `site:reddit.com/r/${subreddits[0]}`
+        : `(${subreddits.map(s => `site:reddit.com/r/${s}`).join(' OR ')})`;
+    } else {
+      siteFilter = 'site:reddit.com';
+    }
+
+    let q = query.replace(REDDIT_SITE_REGEX, '').trim() + ' ' + siteFilter;
 
     if (dateAfter) {
       q += ` after:${dateAfter}`;
@@ -299,14 +328,92 @@ export class SearchClient {
    * Search Reddit with multiple queries (bounded concurrency)
    * NEVER throws - searchReddit never throws, pMap preserves order
    */
-  async searchRedditMultiple(queries: string[], dateAfter?: string): Promise<Map<string, RedditSearchResult[]>> {
+  async searchRedditMultiple(queries: string[], dateAfter?: string, subreddits?: string[]): Promise<Map<string, RedditSearchResult[]>> {
     if (queries.length === 0) {
       return new Map();
     }
 
     const results = await pMap(
       queries,
-      q => this.searchReddit(q, dateAfter),
+      q => this.searchReddit(q, dateAfter, subreddits),
+      MAX_SEARCH_CONCURRENCY
+    );
+
+    return new Map(queries.map((q, i) => [q, results[i] || []]));
+  }
+
+  /**
+   * Search Google News via Serper News API
+   * NEVER throws - returns empty array on failure
+   */
+  async searchNews(query: string, dateRange?: string): Promise<NewsSearchResult[]> {
+    if (!query?.trim()) {
+      return [];
+    }
+
+    const body: Record<string, unknown> = { q: query.trim(), num: DEFAULT_RESULTS_PER_KEYWORD };
+    if (dateRange && DATE_RANGE_TBS[dateRange]) {
+      body.tbs = DATE_RANGE_TBS[dateRange];
+    }
+
+    for (let attempt = 0; attempt <= SEARCH_RETRY_CONFIG.maxRetries; attempt++) {
+      try {
+        const res = await fetchWithTimeout(SERPER_NEWS_API_URL, {
+          method: 'POST',
+          headers: { 'X-API-KEY': this.apiKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          timeoutMs: SEARCH_RETRY_CONFIG.timeoutMs,
+        });
+
+        if (!res.ok) {
+          if (this.isRetryable(res.status) && attempt < SEARCH_RETRY_CONFIG.maxRetries) {
+            const delayMs = calculateBackoff(attempt, SEARCH_RETRY_CONFIG.baseDelayMs, SEARCH_RETRY_CONFIG.maxDelayMs);
+            mcpLog('warning', `News search ${res.status}, retrying in ${delayMs}ms...`, 'search');
+            await sleep(delayMs);
+            continue;
+          }
+          mcpLog('error', `News search failed with status ${res.status}`, 'search');
+          return [];
+        }
+
+        const data = await res.json() as { news?: Array<{ title: string; link: string; snippet: string; date?: string; source?: string; imageUrl?: string }> };
+        return (data.news || []).map((r) => ({
+          title: r.title || '',
+          url: r.link || '',
+          snippet: r.snippet || '',
+          date: r.date,
+          source: r.source,
+          imageUrl: r.imageUrl,
+        }));
+
+      } catch (error) {
+        const err = classifyError(error);
+        if (this.isRetryable(undefined, error) && attempt < SEARCH_RETRY_CONFIG.maxRetries) {
+          const delayMs = calculateBackoff(attempt, SEARCH_RETRY_CONFIG.baseDelayMs, SEARCH_RETRY_CONFIG.maxDelayMs);
+          mcpLog('warning', `News search ${err.code}, retrying in ${delayMs}ms...`, 'search');
+          await sleep(delayMs);
+          continue;
+        }
+        mcpLog('error', `News search failed: ${err.message}`, 'search');
+        return [];
+      }
+    }
+
+    return [];
+  }
+
+  /**
+   * Search news with multiple queries (bounded concurrency)
+   * NEVER throws - searchNews never throws, pMap preserves order
+   */
+  async searchNewsMultiple(queries: string[], dateRange?: string): Promise<Map<string, NewsSearchResult[]>> {
+    if (queries.length === 0) {
+      return new Map();
+    }
+
+    const results = await pMap(
+      queries,
+      q => this.searchNews(q, dateRange),
       MAX_SEARCH_CONCURRENCY
     );
 

@@ -25,12 +25,18 @@ import {
 const MIN_QUESTIONS = 1; // Allow single question for flexibility
 const MAX_QUESTIONS = 10;
 
+interface Citation {
+  url: string;
+  title: string;
+}
+
 interface QuestionResult {
   question: string;
   content: string;
   success: boolean;
   error?: string;
   tokensUsed?: number;
+  citations?: Citation[];
 }
 
 const SYSTEM_PROMPT = `Expert research engine. Multi-source: docs, papers, blogs, case studies. Cite inline [source].
@@ -117,11 +123,24 @@ async function executeResearchQuestions(
         return { question: q.question, content: response.content || '', success: false, error: response.error.message };
       }
 
+      // Extract unique citations from annotations
+      const citations: Citation[] = [];
+      if (response.annotations && response.annotations.length > 0) {
+        const seen = new Set<string>();
+        for (const a of response.annotations) {
+          if (a.url && !seen.has(a.url)) {
+            seen.add(a.url);
+            citations.push({ url: a.url, title: a.title || '' });
+          }
+        }
+      }
+
       return {
         question: q.question,
         content: response.content || '',
         success: !!response.content,
         tokensUsed: response.usage?.totalTokens,
+        citations: citations.length > 0 ? citations : undefined,
         error: response.content ? undefined : 'Empty response received',
       };
     } catch (error) {
@@ -141,6 +160,13 @@ function buildQuestionsData(results: QuestionResult[]): string {
 
     if (r.success) {
       sections.push(r.content);
+      if (r.citations && r.citations.length > 0) {
+        sections.push('\n### Sources Cited\n');
+        for (const c of r.citations) {
+          const label = c.title || c.url;
+          sections.push(`- [${label}](${c.url})`);
+        }
+      }
       if (r.tokensUsed) sections.push(`\n*Tokens used: ${r.tokensUsed.toLocaleString()}*`);
     } else {
       sections.push(`**❌ Error:** ${r.error}`);
@@ -169,8 +195,27 @@ function formatResearchOutput(
     extras: { 'Total tokens used': totalTokens.toLocaleString() },
   });
 
+  // Aggregate all citations across questions for scrape suggestion
+  const allCitations: Citation[] = [];
+  const seenUrls = new Set<string>();
+  for (const r of successful) {
+    if (r.citations) {
+      for (const c of r.citations) {
+        if (!seenUrls.has(c.url)) {
+          seenUrls.add(c.url);
+          allCitations.push(c);
+        }
+      }
+    }
+  }
+
+  const citedUrlsSample = allCitations.slice(0, 5).map(c => `"${c.url}"`).join(', ');
+  const scrapeStep = allCitations.length > 0
+    ? `SCRAPE CITED SOURCES: scrape_links(urls=[${citedUrlsSample}], use_llm=true, what_to_extract="Extract evidence | data | methodology | conclusions") — verify ${allCitations.length} research citation(s) with primary sources`
+    : 'SCRAPE CITED SOURCES: scrape_links(urls=[...URLs cited in research above...], use_llm=true, what_to_extract="Extract evidence | data | methodology | conclusions") — verify research citations with primary sources';
+
   const nextSteps = [
-    successful.length > 0 ? 'SCRAPE CITED SOURCES: scrape_links(urls=[...URLs cited in research above...], use_llm=true, what_to_extract="Extract evidence | data | methodology | conclusions") — verify research citations with primary sources' : null,
+    successful.length > 0 ? scrapeStep : null,
     successful.length > 0 ? 'COMMUNITY VALIDATION: search_reddit(queries=["topic findings", "topic real experience", "topic criticism"]) — check if community agrees with research findings' : null,
     successful.length > 0 ? 'ITERATE: If research revealed gaps or new questions, run deep_research again with refined questions targeting those gaps' : null,
     successful.length > 0 ? 'WEB VERIFY: web_search(keywords=["specific claim from research", "topic latest data 2025"]) — if claims need independent verification' : null,

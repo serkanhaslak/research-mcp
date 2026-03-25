@@ -38,6 +38,42 @@ tools:
         description: "Filter after date (YYYY-MM-DD)"
 
 
+  - name: search_hackernews
+    category: social
+    limits: {min_queries: 3, max_queries: 30, recommended: 10}
+
+    description: |
+      MIN 3, REC 5-10 queries. Searches Hacker News (YCombinator) via free Algolia API — NO API key required, always available. Returns stories, comments, points, and discussion links. HN is the premier source for developer opinions, startup analysis, and technical deep-dives. Each query runs in parallel. Use diverse queries: 1) direct topic 2) Show HN: topic 3) Ask HN: topic 4) topic comparisons 5) topic + specific technology. Combine with search_reddit for cross-platform sentiment analysis.
+
+    parameters:
+      queries:
+        type: array
+        required: true
+        items: {type: string}
+        validation: {minItems: 3, maxItems: 30}
+        description: "3-30 HN search queries. Each targets different angle."
+      type:
+        type: string
+        required: false
+        default: "story"
+        description: "Filter: story, comment, all"
+      sort_by:
+        type: string
+        required: false
+        default: "relevance"
+        description: "Sort by: relevance or date"
+      date_range:
+        type: string
+        required: false
+        default: "year"
+        description: "Filter: day, week, month, year, all"
+      min_points:
+        type: number
+        required: false
+        default: 0
+        description: "Minimum points filter. >50 = high quality."
+
+
   - name: get_reddit_post
     category: reddit
     capability: reddit
@@ -130,6 +166,27 @@ tools:
       timeout: "Timeout per URL (5-120s, default 30)"
       use_llm: "Defaults to true. AI extraction auto-filters noise, extracts only specified targets, returns clean structured content. Compression prefix+suffix auto-applied to maximize info density. Cost: ~$0.001/page. Set false ONLY for raw HTML debugging. Needs OPENROUTER_API_KEY."
       what_to_extract: "Your extraction targets — auto-wrapped with compression prefix+suffix. Formula: 'pricing tiers|limits|features|integrations|API auth with focus on free tier, enterprise'. Min 3 targets with | separator. Be terse and specific (pricing tiers not pricing, API rate limits not API info). No verbose sentences — just targets+focus. The system adds compression instructions automatically."
+
+
+  - name: search_news
+    category: news
+    capability: search
+    limits: {min_queries: 3, max_queries: 30, recommended: 5}
+
+    description: |
+      MIN 3, REC 5-10 queries. Searches Google News for recent articles, press releases, and breaking news. Each query runs in parallel. Use diverse queries: 1) broad topic 2) specific event 3) company/product name 4) "exact phrase" 5) topic + year/date. Combine with scrape_links to get full article content. Operators: "exact phrase", -exclude, site:domain.com.
+
+    parameters:
+      queries:
+        type: array
+        required: true
+        items: {type: string}
+        validation: {minItems: 3, maxItems: 30}
+        description: "3-30 news search queries. Each targets different angle. NO overlap."
+      date_range:
+        type: string
+        required: false
+        description: "Filter by recency: day, week, month, year"
 
 
   - name: web_search

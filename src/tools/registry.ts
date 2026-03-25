@@ -8,13 +8,17 @@ import { McpError, ErrorCode as McpErrorCode } from '@modelcontextprotocol/sdk/t
 
 import { parseEnv, getCapabilities, getMissingEnvMessage, type Capabilities } from '../config/index.js';
 import { classifyError, createToolErrorFromStructured } from '../utils/errors.js';
+import { sanitizeForJson } from '../utils/sanitize.js';
 
 // Import schemas
 import { deepResearchParamsSchema, type DeepResearchParams } from '../schemas/deep-research.js';
 import { scrapeLinksParamsSchema, type ScrapeLinksParams } from '../schemas/scrape-links.js';
 import { webSearchParamsSchema, type WebSearchParams } from '../schemas/web-search.js';
+import { COMMENT_SORTS } from '../clients/reddit.js';
 
 // Import handlers
+import { handleSearchHackerNews } from './hackernews.js';
+import { handleSearchNews } from './news.js';
 import { handleSearchReddit, handleGetRedditPosts } from './reddit.js';
 import { handleDeepResearch } from './research.js';
 import { handleScrapeLinks } from './scrape.js';
@@ -57,6 +61,8 @@ export type ToolRegistry = Record<string, ToolRegistration>;
 const searchRedditParamsSchema = z.object({
   queries: z.array(z.string()).min(3, 'search_reddit: MINIMUM 3 queries required. Add more diverse queries covering different perspectives.').max(50),
   date_after: z.string().optional(),
+  subreddits: z.array(z.string()).max(10).optional()
+    .describe('Optional: limit search to specific subreddits (e.g., ["python", "webdev"]). Max 10. Omit to search all of Reddit.'),
 });
 
 const getRedditPostParamsSchema = z.object({
@@ -66,10 +72,28 @@ const getRedditPostParamsSchema = z.object({
     .describe('Fetch comments (true recommended - best insights in comments)'),
   max_comments: z.number().default(100)
     .describe('Override auto allocation. Leave empty for smart allocation.'),
+  sort: z.enum(COMMENT_SORTS).default('top')
+    .describe('Comment sort order. top=most upvoted, confidence=Reddit default (broadly agreed), new=recent, controversial=debates, qa=Q&A threads.'),
   use_llm: z.boolean().default(false)
     .describe('Default false — DO NOT enable unless user explicitly requests synthesis. Raw comments preserve exact quotes, code snippets, and nuanced opinions that LLM summarization loses.'),
   what_to_extract: z.string().optional()
     .describe('Only used when use_llm=true. Extraction instructions for AI synthesis.'),
+});
+
+const searchNewsParamsSchema = z.object({
+  queries: z.array(z.string()).min(3, 'search_news: MINIMUM 3 queries required.').max(30),
+  date_range: z.enum(['day', 'week', 'month', 'year']).optional()
+    .describe('Filter by recency: day, week, month, year. Default: all time.'),
+});
+
+const searchHackerNewsParamsSchema = z.object({
+  queries: z.array(z.string()).min(3, 'search_hackernews: MINIMUM 3 queries required.').max(30),
+  type: z.enum(['story', 'comment', 'all']).default('story').optional()
+    .describe('Filter: story (articles/links), comment (discussions), all (both).'),
+  sort_by: z.enum(['relevance', 'date']).default('relevance').optional(),
+  date_range: z.enum(['day', 'week', 'month', 'year', 'all']).default('year').optional(),
+  min_points: z.number().min(0).default(0).optional()
+    .describe('Minimum points/score filter. Use >50 for high-quality content.'),
 });
 
 // ============================================================================
@@ -83,7 +107,7 @@ const env = parseEnv();
  */
 async function searchRedditHandler(params: unknown): Promise<string> {
   const p = params as z.infer<typeof searchRedditParamsSchema>;
-  return handleSearchReddit(p.queries, env.SEARCH_API_KEY || '', p.date_after);
+  return handleSearchReddit(p.queries, env.SEARCH_API_KEY || '', p.date_after, p.subreddits);
 }
 
 /**
@@ -99,10 +123,32 @@ async function getRedditPostHandler(params: unknown): Promise<string> {
     {
       fetchComments: p.fetch_comments,
       maxCommentsOverride: p.max_comments !== 100 ? p.max_comments : undefined,
+      sort: p.sort,
       use_llm: p.use_llm,
       what_to_extract: p.what_to_extract,
     }
   );
+}
+
+/**
+ * Wrapper for search_news handler
+ */
+async function searchNewsHandler(params: unknown): Promise<string> {
+  const p = params as z.infer<typeof searchNewsParamsSchema>;
+  return handleSearchNews(p.queries, env.SEARCH_API_KEY || '', p.date_range);
+}
+
+/**
+ * Wrapper for search_hackernews handler
+ */
+async function searchHackerNewsHandler(params: unknown): Promise<string> {
+  const p = params as z.infer<typeof searchHackerNewsParamsSchema>;
+  return handleSearchHackerNews(p.queries, {
+    type: p.type,
+    sort_by: p.sort_by,
+    date_range: p.date_range,
+    min_points: p.min_points,
+  });
 }
 
 /**
@@ -137,6 +183,19 @@ async function webSearchHandler(params: unknown): Promise<string> {
  * Central registry of all MCP tools
  */
 export const toolRegistry: ToolRegistry = {
+  search_news: {
+    name: 'search_news',
+    capability: 'search',
+    schema: searchNewsParamsSchema,
+    handler: searchNewsHandler,
+  },
+
+  search_hackernews: {
+    name: 'search_hackernews',
+    schema: searchHackerNewsParamsSchema,
+    handler: searchHackerNewsHandler,
+  },
+
   search_reddit: {
     name: 'search_reddit',
     capability: 'search',
@@ -232,15 +291,16 @@ function validateToolParams(
  * applying the tool's transformResponse if present.
  */
 function buildToolResult(result: string, tool: ToolRegistration): CallToolResult {
+  const safeResult = sanitizeForJson(result);
   if (tool.transformResponse) {
-    const transformed = tool.transformResponse(result);
+    const transformed = tool.transformResponse(safeResult);
     return {
       content: [{ type: 'text', text: transformed.content }],
       isError: transformed.isError,
     };
   }
   return {
-    content: [{ type: 'text', text: result }],
+    content: [{ type: 'text', text: safeResult }],
   };
 }
 

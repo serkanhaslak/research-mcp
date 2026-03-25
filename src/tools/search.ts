@@ -44,9 +44,9 @@ interface SearchResponse {
 
 // --- Helpers ---
 
-async function executeSearches(keywords: string[]): Promise<SearchResponse> {
+async function executeSearches(keywords: string[], numResults?: number): Promise<SearchResponse> {
   const client = new SearchClient();
-  return client.searchMultiple(keywords);
+  return client.searchMultiple(keywords, numResults);
 }
 
 function processAndRankResults(response: SearchResponse): {
@@ -235,9 +235,9 @@ export async function handleWebSearch(
   const startTime = Date.now();
 
   try {
-    mcpLog('info', `Searching for ${params.keywords.length} keyword(s)`, 'search');
+    mcpLog('info', `Searching for ${params.keywords.length} keyword(s)${params.num_results ? `, ${params.num_results} results each` : ''}`, 'search');
 
-    const response = await executeSearches(params.keywords);
+    const response = await executeSearches(params.keywords, params.num_results);
     const { aggregation, urlLookup, consensusUrls } = processAndRankResults(response);
 
     const consensusSection = buildConsensusSection(consensusUrls, params.keywords, aggregation);

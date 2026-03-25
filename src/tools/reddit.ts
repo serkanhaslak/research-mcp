@@ -4,7 +4,7 @@
  */
 
 import { SearchClient } from '../clients/search.js';
-import { RedditClient, calculateCommentAllocation, type PostResult, type Comment } from '../clients/reddit.js';
+import { RedditClient, calculateCommentAllocation, type PostResult, type Comment, type CommentSort } from '../clients/reddit.js';
 import { aggregateAndRankReddit, generateRedditEnhancedOutput } from '../utils/url-aggregator.js';
 import { REDDIT } from '../config/index.js';
 import { classifyError } from '../utils/errors.js';
@@ -17,6 +17,7 @@ import {
   formatError,
   formatBatchHeader,
   TOKEN_BUDGETS,
+  countMapValues,
 } from './utils.js';
 
 // ============================================================================
@@ -60,14 +61,6 @@ function formatPost(result: PostResult, fetchComments: boolean): string {
 // Search Reddit Handler
 // ============================================================================
 
-function countTotalResults(results: Map<string, unknown[]>): number {
-  let total = 0;
-  for (const items of results.values()) {
-    total += items.length;
-  }
-  return total;
-}
-
 function formatNoSearchResults(queryCount: number): string {
   return formatError({
     code: 'NO_RESULTS',
@@ -105,14 +98,15 @@ function formatSearchRedditError(error: unknown): string {
 export async function handleSearchReddit(
   queries: string[],
   apiKey: string,
-  dateAfter?: string
+  dateAfter?: string,
+  subreddits?: string[],
 ): Promise<string> {
   try {
     const limited = queries.slice(0, 50);
     const client = new SearchClient(apiKey);
-    const results = await client.searchRedditMultiple(limited, dateAfter);
+    const results = await client.searchRedditMultiple(limited, dateAfter, subreddits);
 
-    const totalResults = countTotalResults(results);
+    const totalResults = countMapValues(results);
     if (totalResults === 0) {
       return formatNoSearchResults(limited.length);
     }
@@ -131,6 +125,7 @@ export async function handleSearchReddit(
 interface GetRedditPostsOptions {
   fetchComments?: boolean;
   maxCommentsOverride?: number;
+  sort?: CommentSort;
   use_llm?: boolean;
   what_to_extract?: string;
 }
@@ -345,7 +340,7 @@ export async function handleGetRedditPosts(
   options: GetRedditPostsOptions = {}
 ): Promise<string> {
   try {
-    const { fetchComments = true, maxCommentsOverride, use_llm = false, what_to_extract } = options;
+    const { fetchComments = true, maxCommentsOverride, sort = 'top', use_llm = false, what_to_extract } = options;
 
     const validationError = validatePostCount(urls.length);
     if (validationError) return validationError;
@@ -355,7 +350,7 @@ export async function handleGetRedditPosts(
     const totalBatches = Math.ceil(urls.length / REDDIT.BATCH_SIZE);
 
     const client = new RedditClient(clientId, clientSecret);
-    const batchResult = await client.batchGetPosts(urls, commentsPerPost, fetchComments);
+    const batchResult = await client.batchGetPosts(urls, commentsPerPost, fetchComments, undefined, sort);
 
     const processResult = await fetchAndProcessPosts(
       batchResult.results, urls, fetchComments, use_llm, what_to_extract,

@@ -109,6 +109,15 @@ export function calculateTokenAllocation(count: number, budget: number): number 
   return Math.floor(budget / count);
 }
 
+/**
+ * Count total items across a Map of arrays
+ */
+export function countMapValues(results: Map<string, unknown[]>): number {
+  let total = 0;
+  for (const items of results.values()) total += items.length;
+  return total;
+}
+
 // ============================================================================
 // Error Formatting
 // ============================================================================

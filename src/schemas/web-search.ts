@@ -22,6 +22,14 @@ const keywordsSchema = z
 
 const webSearchParamsShape = {
   keywords: keywordsSchema,
+  num_results: z
+    .number()
+    .int()
+    .min(1, { message: 'web_search: num_results must be at least 1' })
+    .max(100, { message: 'web_search: num_results cannot exceed 100' })
+    .optional()
+    .default(10)
+    .describe('Number of results per keyword (1-100, default 10). Higher values increase coverage per query without additional API calls.'),
 };
 
 export const webSearchParamsSchema = z.object(webSearchParamsShape);
