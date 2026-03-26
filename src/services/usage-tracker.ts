@@ -1,7 +1,6 @@
 /**
- * Usage Tracker — JSONL-based tool usage logging with buffered writes
- * Tracks tool calls, token counts, costs, and execution times.
- * Writes daily JSONL files to a configurable data directory (/data/usage by default).
+ * Usage Tracker — JSONL-based tool usage logging with buffered writes.
+ * Writes daily files to a configurable directory (/data/usage by default).
  * Gracefully degrades to in-memory only when disk is unavailable.
  * NEVER crashes the server.
  */
@@ -10,15 +9,26 @@ import { mkdirSync, appendFileSync, readdirSync, readFileSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { mcpLog } from '../utils/logger.js';
 
-// ── Config (inline to avoid circular dep with config/index.ts) ──
+// ── Config (cached, inline to avoid circular dep with config/index.ts) ──
 
-function getConfig() {
-  return {
+interface UsageConfig {
+  readonly ENABLED: boolean;
+  readonly DATA_DIR: string;
+  readonly FLUSH_INTERVAL_MS: number;
+  readonly MAX_BUFFER_ENTRIES: number;
+}
+
+let cachedConfig: UsageConfig | null = null;
+
+function getConfig(): UsageConfig {
+  if (cachedConfig) return cachedConfig;
+  cachedConfig = {
     ENABLED: process.env.USAGE_TRACKING !== 'false',
     DATA_DIR: process.env.USAGE_DATA_DIR || '/data/usage',
     FLUSH_INTERVAL_MS: Math.max(1000, parseInt(process.env.USAGE_FLUSH_INTERVAL_MS || '5000', 10) || 5000),
     MAX_BUFFER_ENTRIES: Math.max(100, parseInt(process.env.USAGE_MAX_BUFFER_ENTRIES || '10000', 10) || 10000),
   };
+  return cachedConfig;
 }
 
 // ── Types ──
@@ -42,24 +52,20 @@ export interface UsageSummary {
   readonly byTool: Record<string, { calls: number; tokens: number; costUsd: number; errors: number }>;
 }
 
-// ── Cost table (USD per token) ──
+// ── Cost table ──
 
+// Blended token cost: ~$0.20/M input, ~$1.00/M output → ~$0.76/M at 30/70 split
 const TOOL_COST_PER_TOKEN: Record<string, number | null> = {
-  // Grok 4.1 Fast via OpenRouter: ~$0.20/M input, ~$1.00/M output
-  // Blended estimate assuming ~30% input / 70% output
   search_x: 0.76 / 1_000_000,
   deep_research: 0.76 / 1_000_000,
-  // Free tools
   web_search: null,
   search_reddit: null,
   search_news: null,
   search_hackernews: null,
   get_reddit_post: null,
-  // scrape_links cost depends on use_llm — tracked as null, tokens still logged
   scrape_links: null,
 };
 
-// Per-call fixed costs (OpenRouter web search plugin)
 const TOOL_FIXED_COST: Record<string, number> = {
   search_x: 0.005, // $5/1k native xAI search calls
 };
@@ -92,13 +98,22 @@ function estimateCost(tool: string, totalTokens?: number): number | undefined {
 let buffer: UsageEntry[] = [];
 let flushTimer: ReturnType<typeof setInterval> | null = null;
 let diskAvailable = false;
-let initialized = false;
 let diskWarningLogged = false;
 
 function todayFile(): string {
-  const d = new Date();
-  const date = d.toISOString().slice(0, 10); // YYYY-MM-DD
-  return `${getConfig().DATA_DIR}/${date}.jsonl`;
+  return `${getConfig().DATA_DIR}/${new Date().toISOString().slice(0, 10)}.jsonl`;
+}
+
+function ensureFlushTimer(): void {
+  if (flushTimer) return;
+  flushTimer = setInterval(() => flushBuffer(), getConfig().FLUSH_INTERVAL_MS);
+  flushTimer.unref();
+}
+
+function clearFlushTimer(): void {
+  if (!flushTimer) return;
+  clearInterval(flushTimer);
+  flushTimer = null;
 }
 
 // ── Public API ──
@@ -118,20 +133,16 @@ export function initUsageTracker(): void {
     diskAvailable = false;
     mcpLog('warning', `Usage tracker: disk unavailable (${cfg.DATA_DIR}), in-memory only`, 'usage');
   }
-
-  flushTimer = setInterval(() => flushBuffer(), cfg.FLUSH_INTERVAL_MS);
-  flushTimer.unref();
-  initialized = true;
 }
 
 export function track(entry: UsageEntry): void {
-  if (!getConfig().ENABLED) return;
   const cfg = getConfig();
+  if (!cfg.ENABLED) return;
   buffer.push(entry);
-  // Cap buffer to prevent memory leak
   if (buffer.length > cfg.MAX_BUFFER_ENTRIES) {
-    buffer = buffer.slice(-cfg.MAX_BUFFER_ENTRIES);
+    buffer.shift();
   }
+  ensureFlushTimer();
 }
 
 export function trackToolCall(
@@ -155,10 +166,7 @@ export function trackToolCall(
 }
 
 export function shutdownUsageTracker(): void {
-  if (flushTimer) {
-    clearInterval(flushTimer);
-    flushTimer = null;
-  }
+  clearFlushTimer();
   flushSync();
 }
 
@@ -172,9 +180,14 @@ function flushBuffer(): void {
   const entries = buffer.splice(0);
   const lines = entries.map(e => JSON.stringify(e)).join('\n') + '\n';
   appendFile(todayFile(), lines, 'utf-8')
+    .then(() => {
+      // Stop timer if buffer is empty after successful flush
+      if (buffer.length === 0) clearFlushTimer();
+    })
     .catch((err) => {
-      // Put entries back and warn once
-      buffer.unshift(...entries);
+      // Restore entries, capped to prevent unbounded growth
+      const cfg = getConfig();
+      buffer = entries.concat(buffer).slice(0, cfg.MAX_BUFFER_ENTRIES);
       if (!diskWarningLogged) {
         mcpLog('warning', `Usage tracker flush failed: ${err?.message || 'unknown'}`, 'usage');
         diskWarningLogged = true;
@@ -184,8 +197,7 @@ function flushBuffer(): void {
 }
 
 function flushSync(): void {
-  if (buffer.length === 0) return;
-  if (!diskAvailable) return;
+  if (buffer.length === 0 || !diskAvailable) return;
   try {
     const lines = buffer.map(e => JSON.stringify(e)).join('\n') + '\n';
     appendFileSync(todayFile(), lines, 'utf-8');
@@ -195,7 +207,7 @@ function flushSync(): void {
   }
 }
 
-// ── Stats (read JSONL files) ──
+// ── Stats ──
 
 export function getUsageStats(days: number = 1): UsageSummary {
   const byTool: Record<string, { calls: number; tokens: number; costUsd: number; errors: number }> = {};
@@ -206,7 +218,6 @@ export function getUsageStats(days: number = 1): UsageSummary {
 
   const entries: UsageEntry[] = [...buffer];
 
-  // Read JSONL files for the requested date range
   if (diskAvailable) {
     const cfg = getConfig();
     try {
@@ -222,7 +233,10 @@ export function getUsageStats(days: number = 1): UsageSummary {
           const content = readFileSync(`${cfg.DATA_DIR}/${file}`, 'utf-8');
           for (const line of content.split('\n')) {
             if (!line.trim()) continue;
-            try { entries.push(JSON.parse(line)); } catch { /* skip malformed */ }
+            try {
+              const parsed = JSON.parse(line);
+              if (typeof parsed.tool === 'string') entries.push(parsed);
+            } catch { /* skip malformed */ }
           }
         } catch { /* skip unreadable files */ }
       }
@@ -245,9 +259,6 @@ export function getUsageStats(days: number = 1): UsageSummary {
     if (!e.success) t.errors++;
   }
 
-  const fromDate = new Date();
-  fromDate.setDate(fromDate.getDate() - days);
   const period = days === 1 ? 'today' : `last ${days} days`;
-
   return { period, totalCalls, totalErrors, totalTokens, totalCostUsd, byTool };
 }

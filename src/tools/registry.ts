@@ -386,8 +386,9 @@ export async function executeTool(
     return createToolErrorFromStructured(structured);
   }
 
-  trackToolCall(name, Date.now() - startTime, !result.includes('# ❌'), result);
-  return buildToolResult(result, tool);
+  const toolResult = buildToolResult(result, tool);
+  trackToolCall(name, Date.now() - startTime, !toolResult.isError, result);
+  return toolResult;
 }
 
 // ============================================================================
