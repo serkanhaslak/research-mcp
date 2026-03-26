@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-MCP server providing 5 research tools to AI assistants: web search (Google via Serper), Reddit search (also via Serper with `site:reddit.com`) & post extraction (via Reddit OAuth), URL scraping with optional AI extraction, and AI-powered deep research synthesis. Supports STDIO, HTTP Streamable, and Cloudflare Workers transports. Node.js >= 20.0.0.
+MCP server providing research tools to AI assistants: web search (Google via Serper), Reddit search (also via Serper with `site:reddit.com`) & post extraction (via Reddit OAuth), X/Twitter search (Grok via OpenRouter), URL scraping with optional AI extraction, and AI-powered deep research synthesis. Supports STDIO, HTTP Streamable, and Cloudflare Workers transports. Node.js >= 20.0.0.
 
 ## Build & Run
 
@@ -42,11 +42,12 @@ Server starts with any configuration — tools are silently disabled if their AP
 | `SERPER_API_KEY` | `web_search`, `search_reddit` | 2,500 queries/mo |
 | `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` | `get_reddit_post` | unlimited |
 | `SCRAPEDO_API_KEY` | `scrape_links` | 1,000 credits/mo |
-| `OPENROUTER_API_KEY` | `deep_research`, `use_llm` in scrape_links | pay-as-you-go |
+| `OPENROUTER_API_KEY` | `deep_research`, `search_x`, `use_llm` in scrape_links | pay-as-you-go |
 | `CEREBRAS_API_KEY` | Cerebras for `scrape_links` extraction | — |
 | `USE_CEREBRAS` | Enable Cerebras extraction (`true`/`false`) | `false` |
 
 Note: `search_reddit` uses Google Serper (`site:reddit.com`), NOT the Reddit API. Only `get_reddit_post` uses Reddit OAuth credentials.
+Note: `search_x` uses Grok on OpenRouter (not the X/Twitter API directly). It leverages OpenRouter's web plugin which enables native X search for xAI models.
 
 **Optional tuning:**
 - `RESEARCH_MODEL` — Primary deep research model (default: `x-ai/grok-4-fast`)
@@ -76,6 +77,7 @@ src/
 │   ├── types.ts                # Config type definitions
 │   └── yaml/tools.yaml         # Complete tool specifications (single source of truth for tool metadata)
 ├── clients/                    # External API integrations
+│   ├── xsearch.ts              # X/Twitter search via Grok on OpenRouter (5 concurrent, :online plugin)
 │   ├── search.ts               # Google Serper API (8 concurrent calls)
 │   ├── reddit.ts               # Reddit OAuth API (5 concurrent calls, module-level token cache with 60s expiry)
 │   ├── scraper.ts              # Scrape.do with 3-mode fallback: basic → JS rendering → JS + US geo
@@ -84,6 +86,7 @@ src/
 │   ├── definitions.ts          # Tool metadata generated from YAML
 │   ├── registry.ts             # Central handler registry & execution pipeline
 │   ├── search.ts               # web_search handler (3-100 parallel keywords)
+│   ├── xsearch.ts              # search_x handler (1-20 queries, 5 concurrent, Grok via OpenRouter)
 │   ├── reddit.ts               # search_reddit (10-50 queries via Serper) + get_reddit_post (via Reddit API)
 │   ├── scrape.ts               # scrape_links handler (1-50 URLs, 10 concurrent, batches of 30)
 │   ├── research.ts             # deep_research handler (1-10 questions, 32K token budget, file attachments)
@@ -109,7 +112,8 @@ src/
 - **Tool specs in YAML** (`config/yaml/tools.yaml`) — single source of truth for tool names, descriptions, and parameter specs. Copied into `dist/config/` during build. If you add new YAML files, they must be in this directory.
 - **Never-throw pattern** — server never crashes on tool failures. All errors go through `classifyError()` which categorizes as retryable (429, 5xx → exponential backoff) or non-retryable (→ user-friendly message with setup instructions).
 - **Capability-based degradation** — missing API keys disable specific tools with helpful setup instructions rather than failing.
-- **Bounded concurrency** — web_search: 8, search_reddit: 8, get_reddit_post: 5 (batches of 10), scrape_links: 10 (batches of 30) + 3 LLM extractions, deep_research: 3.
+- **Bounded concurrency** — web_search: 8, search_reddit: 8, get_reddit_post: 5 (batches of 10), scrape_links: 10 (batches of 30) + 3 LLM extractions, deep_research: 3, search_x: 5.
+- **X search via OpenRouter** — `search_x` uses Grok 4.1 Fast on OpenRouter with the `:online` web plugin, which enables both `web_search` and `x_search` natively for xAI models. Supports handle filtering, date ranges via `x_search_filter`. Cost: ~$0.005/tool call + tokens (~$0.01-0.03 per query total).
 - **CTR-weighted URL ranking** — search results ranked by click-through rates with consensus detection across multiple queries.
 - **Smart Reddit comment allocation** — 1000 total budget, capped at 200/post: 5+ posts → budget/count each, 2 posts → 200 each (capped from 500).
 - **70/20/10 response format** — all tools return: 70% summary, 20% structured data, 10% actionable next steps.

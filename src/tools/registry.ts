@@ -23,6 +23,7 @@ import { handleSearchReddit, handleGetRedditPosts } from './reddit.js';
 import { handleDeepResearch } from './research.js';
 import { handleScrapeLinks } from './scrape.js';
 import { handleWebSearch } from './search.js';
+import { handleSearchX, type SearchXParams } from './xsearch.js';
 
 // ============================================================================
 // Types
@@ -94,6 +95,19 @@ const searchHackerNewsParamsSchema = z.object({
   date_range: z.enum(['day', 'week', 'month', 'year', 'all']).default('year').optional(),
   min_points: z.number().min(0).default(0).optional()
     .describe('Minimum points/score filter. Use >50 for high-quality content.'),
+});
+
+const searchXParamsSchema = z.object({
+  queries: z.array(z.string()).min(1, 'search_x: At least 1 query required.').max(20)
+    .describe('1-20 X/Twitter search queries. Each runs as a separate Grok-powered X search in parallel. Use diverse queries for comprehensive coverage.'),
+  from_handles: z.array(z.string()).max(10).optional()
+    .describe('Only include posts from these X handles (max 10, without @ prefix). Cannot be used with exclude_handles.'),
+  exclude_handles: z.array(z.string()).max(10).optional()
+    .describe('Exclude posts from these X handles (max 10, without @ prefix). Cannot be used with from_handles.'),
+  from_date: z.string().optional()
+    .describe('Start date filter (ISO 8601, e.g. "2025-01-01")'),
+  to_date: z.string().optional()
+    .describe('End date filter (ISO 8601, e.g. "2025-12-31")'),
 });
 
 // ============================================================================
@@ -175,6 +189,10 @@ async function webSearchHandler(params: unknown): Promise<string> {
   return content;
 }
 
+async function searchXHandler(params: unknown): Promise<string> {
+  return handleSearchX(params as SearchXParams);
+}
+
 // ============================================================================
 // Tool Registry
 // ============================================================================
@@ -240,6 +258,17 @@ export const toolRegistry: ToolRegistry = {
     transformResponse: (result) => ({
       content: result,
       isError: result.includes('# ❌ web_search'),
+    }),
+  },
+
+  search_x: {
+    name: 'search_x',
+    capability: 'xSearch',
+    schema: searchXParamsSchema,
+    handler: searchXHandler,
+    transformResponse: (result) => ({
+      content: result,
+      isError: result.includes('# ❌ search_x'),
     }),
   },
 };

@@ -154,6 +154,7 @@ export interface Capabilities {
   search: boolean;        // SERPER_API_KEY
   scraping: boolean;      // SCRAPEDO_API_KEY
   deepResearch: boolean;  // OPENROUTER_API_KEY
+  xSearch: boolean;       // OPENROUTER_API_KEY (Grok via OpenRouter)
   llmExtraction: boolean; // OPENROUTER_API_KEY (for what_to_extract in scraping)
   cerebras: boolean;      // USE_CEREBRAS=true + CEREBRAS_API_KEY
 }
@@ -165,6 +166,7 @@ export function getCapabilities(): Capabilities {
     search: !!env.SEARCH_API_KEY,
     scraping: !!env.SCRAPER_API_KEY,
     deepResearch: !!RESEARCH.API_KEY,
+    xSearch: !!RESEARCH.API_KEY,
     llmExtraction: !!RESEARCH.API_KEY || CEREBRAS.ENABLED,
     cerebras: CEREBRAS.ENABLED,
   };
@@ -176,6 +178,7 @@ export function getMissingEnvMessage(capability: keyof Capabilities): string {
     search: '❌ **Search unavailable.** Set `SERPER_API_KEY` to enable web search and Reddit search.\n\n👉 Get your free API key at: https://serper.dev (2,500 free queries)',
     scraping: '❌ **Web scraping unavailable.** Set `SCRAPEDO_API_KEY` to enable URL content extraction.\n\n👉 Sign up at: https://scrape.do (1,000 free credits)',
     deepResearch: '❌ **Deep research unavailable.** Set `OPENROUTER_API_KEY` to enable AI-powered research.\n\n👉 Get your API key at: https://openrouter.ai/keys',
+    xSearch: '❌ **X/Twitter search unavailable.** Set `OPENROUTER_API_KEY` to enable X search via Grok on OpenRouter.\n\n👉 Get your API key at: https://openrouter.ai/keys (~$0.01-0.03 per search)',
     llmExtraction: '⚠️ **AI extraction disabled.** The `use_llm` and `what_to_extract` features require `OPENROUTER_API_KEY`.\n\nScraping will work but without intelligent content filtering.',
     cerebras: '⚠️ **Cerebras not configured.** Set `USE_CEREBRAS=true` and `CEREBRAS_API_KEY` to use Cerebras for LLM extraction.\n\n👉 Get your API key at: https://cloud.cerebras.ai',
   };

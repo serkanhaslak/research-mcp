@@ -79,14 +79,14 @@ export interface ResearchResponse {
 }
 
 /** OpenRouter extension for response messages with annotations */
-interface OpenRouterMessage {
+export interface OpenRouterMessage {
   readonly role: string;
   readonly content: string | null;
   readonly annotations?: readonly OpenRouterAnnotation[];
 }
 
 /** Single annotation from OpenRouter response */
-interface OpenRouterAnnotation {
+export interface OpenRouterAnnotation {
   readonly type: string;
   readonly url_citation?: {
     readonly url: string;

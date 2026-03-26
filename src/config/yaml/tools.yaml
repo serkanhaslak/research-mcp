@@ -189,6 +189,43 @@ tools:
         description: "Filter by recency: day, week, month, year"
 
 
+  - name: search_x
+    category: social
+    capability: xSearch
+    limits: {min_queries: 1, max_queries: 20, recommended: 5}
+
+    description: |
+      MIN 1, REC 3-5 queries. Searches X/Twitter posts in real-time via Grok AI on OpenRouter (~$0.01-0.03 per query). Each query runs as a separate parallel X search. Returns post content, authors, engagement metrics, and direct links. Supports handle filtering (from/exclude), date ranges. Use diverse queries: 1) topic keywords 2) @specific_handles 3) hashtags 4) sentiment ("topic amazing"/"topic broken") 5) comparisons. Combine with search_reddit for cross-platform social analysis. For indexed/historical X posts, use web_search with site:x.com instead.
+
+    parameters:
+      queries:
+        type: array
+        required: true
+        items: {type: string}
+        validation: {minItems: 1, maxItems: 20}
+        description: "1-20 X/Twitter search queries. Each targets different angle. Diverse queries = better coverage."
+      from_handles:
+        type: array
+        required: false
+        items: {type: string}
+        validation: {maxItems: 10}
+        description: "Only include posts from these handles (max 10, without @ prefix). Cannot use with exclude_handles."
+      exclude_handles:
+        type: array
+        required: false
+        items: {type: string}
+        validation: {maxItems: 10}
+        description: "Exclude posts from these handles (max 10, without @ prefix). Cannot use with from_handles."
+      from_date:
+        type: string
+        required: false
+        description: "Start date (ISO 8601, e.g. '2025-01-01')"
+      to_date:
+        type: string
+        required: false
+        description: "End date (ISO 8601, e.g. '2025-12-31')"
+
+
   - name: web_search
     category: search
     capability: search
