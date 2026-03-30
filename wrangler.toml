@@ -5,6 +5,10 @@ compatibility_date = "2026-03-01"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
+# Workers AI binding (for LLM extraction — runs on Cloudflare, no external API)
+[ai]
+binding = "AI"
+
 # KV Namespaces
 [[kv_namespaces]]
 binding = "OAUTH_TOKENS"
@@ -69,6 +73,8 @@ MAX_SESSIONS = "100"
 DEFAULT_REASONING_EFFORT = "high"
 DEFAULT_MAX_URLS = "100"
 API_TIMEOUT_MS = "300000"
+LLM_EXTRACTION_MODEL = "@cf/zai-org/glm-4.7-flash"
+LLM_EXTRACTION_FALLBACK_MODEL = "@cf/openai/gpt-oss-120b"
 
 # Custom domain
 [[routes]]

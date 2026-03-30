@@ -13,6 +13,7 @@ import {
   type PostResult,
   type Comment,
 } from '../clients/reddit.js';
+import { extractWithWorkersAI } from '../lib/extraction.js';
 import { OpenRouterClient } from '../clients/openrouter.js';
 import { pMap } from '../lib/concurrency.js';
 import { formatSuccess, formatError, formatBatchHeader, TOKEN_BUDGET } from '../lib/response.js';
@@ -137,28 +138,34 @@ export const redditPostTool: ToolDefinition<typeof schema> = {
         successEntries.push({ url, result, content: formatPost(result, fetch_comments) });
       }
 
-      // Optional LLM extraction
+      // Optional LLM extraction — Workers AI (primary) or OpenRouter (fallback)
       let processedEntries = successEntries;
-      if (use_llm && env.OPENROUTER_API_KEY && successEntries.length > 0) {
-        const tokensPerUrl = Math.floor(TOKEN_BUDGET / urls.length);
-        const enhancedInstruction = (what_to_extract || 'Extract key insights, recommendations, and community consensus from these Reddit discussions.')
-          + '\n\n---\nExtract and synthesize the key insights, opinions, and recommendations. Focus on common themes, specific recommendations, contrasting viewpoints, and real-world experiences.';
+      if (use_llm && successEntries.length > 0) {
+        const useWorkersAI = !!env.AI;
+        const useOpenRouter = !useWorkersAI && !!env.OPENROUTER_API_KEY;
 
-        const llmClient = new OpenRouterClient(env.OPENROUTER_API_KEY!, {
-          extractionModel: env.LLM_EXTRACTION_MODEL,
-        });
-        const llmResults = await pMap(successEntries, async (entry) => {
-          const llmResult = await llmClient.extract(
-            entry.content, enhancedInstruction, tokensPerUrl,
-          );
-          if (llmResult.processed) {
-            const header = `## LLM Analysis: ${entry.result.post.title}\n\n**r/${entry.result.post.subreddit}** | u/${entry.result.post.author} | ${entry.result.post.score} points | ${entry.result.post.commentCount} comments\n${entry.result.post.url}\n\n`;
-            return { ...entry, content: header + llmResult.content };
-          }
-          llmErrors++;
-          return entry;
-        }, 3);
-        processedEntries = llmResults;
+        if (useWorkersAI || useOpenRouter) {
+          const tokensPerUrl = Math.floor(TOKEN_BUDGET / urls.length);
+          const enhancedInstruction = (what_to_extract || 'Extract key insights, recommendations, and community consensus from these Reddit discussions.')
+            + '\n\n---\nExtract and synthesize the key insights, opinions, and recommendations. Focus on common themes, specific recommendations, contrasting viewpoints, and real-world experiences.';
+
+          const llmResults = await pMap(successEntries, async (entry) => {
+            let result;
+            if (useWorkersAI) {
+              result = await extractWithWorkersAI(env.AI!, entry.content, enhancedInstruction, tokensPerUrl, env);
+            } else {
+              const llmClient = new OpenRouterClient(env.OPENROUTER_API_KEY!, { extractionModel: env.LLM_EXTRACTION_MODEL });
+              result = await llmClient.extract(entry.content, enhancedInstruction, tokensPerUrl);
+            }
+            if (result.processed) {
+              const header = `## LLM Analysis: ${entry.result.post.title}\n\n**r/${entry.result.post.subreddit}** | u/${entry.result.post.author} | ${entry.result.post.score} points | ${entry.result.post.commentCount} comments\n${entry.result.post.url}\n\n`;
+              return { ...entry, content: header + result.content };
+            }
+            llmErrors++;
+            return entry;
+          }, 3);
+          processedEntries = llmResults;
+        }
       }
 
       const contents = [...failedContents, ...processedEntries.map(e => e.content)];

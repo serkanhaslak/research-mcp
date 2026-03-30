@@ -8,6 +8,9 @@ export interface Env {
   OAUTH_TOKENS: KVNamespace;
   MCP_SESSIONS: KVNamespace;
 
+  // Workers AI binding (for LLM extraction — runs on Cloudflare, no external API)
+  AI?: Ai;
+
   // Server config (plain vars — always strings)
   SERVER_NAME: string;
   SERVER_VERSION: string;
@@ -31,6 +34,7 @@ export interface Env {
   RESEARCH_MODEL?: string;
   RESEARCH_FALLBACK_MODEL?: string;
   LLM_EXTRACTION_MODEL?: string;
+  LLM_EXTRACTION_FALLBACK_MODEL?: string;
 
   // Tuning
   DEFAULT_REASONING_EFFORT?: string;
@@ -51,6 +55,9 @@ export interface ResolvedEnv {
   OAUTH_TOKENS: KVNamespace;
   MCP_SESSIONS: KVNamespace;
 
+  // Workers AI binding — passed through directly (not a secret)
+  AI?: Ai;
+
   SERVER_NAME: string;
   SERVER_VERSION: string;
   MCP_PROTOCOL_VERSION: string;
@@ -70,6 +77,7 @@ export interface ResolvedEnv {
   RESEARCH_MODEL?: string;
   RESEARCH_FALLBACK_MODEL?: string;
   LLM_EXTRACTION_MODEL?: string;
+  LLM_EXTRACTION_FALLBACK_MODEL?: string;
 
   DEFAULT_REASONING_EFFORT?: string;
   DEFAULT_MAX_URLS?: string;
@@ -108,6 +116,7 @@ export async function resolveEnv(raw: Env): Promise<ResolvedEnv> {
   return {
     OAUTH_TOKENS: raw.OAUTH_TOKENS,
     MCP_SESSIONS: raw.MCP_SESSIONS,
+    AI: raw.AI,
     SERVER_NAME: raw.SERVER_NAME,
     SERVER_VERSION: raw.SERVER_VERSION,
     MCP_PROTOCOL_VERSION: raw.MCP_PROTOCOL_VERSION,
@@ -124,6 +133,7 @@ export async function resolveEnv(raw: Env): Promise<ResolvedEnv> {
     RESEARCH_MODEL: raw.RESEARCH_MODEL,
     RESEARCH_FALLBACK_MODEL: raw.RESEARCH_FALLBACK_MODEL,
     LLM_EXTRACTION_MODEL: raw.LLM_EXTRACTION_MODEL,
+    LLM_EXTRACTION_FALLBACK_MODEL: raw.LLM_EXTRACTION_FALLBACK_MODEL,
     DEFAULT_REASONING_EFFORT: raw.DEFAULT_REASONING_EFFORT,
     DEFAULT_MAX_URLS: raw.DEFAULT_MAX_URLS,
     API_TIMEOUT_MS: raw.API_TIMEOUT_MS,
@@ -146,6 +156,6 @@ export function getCapabilities(env: ResolvedEnv): Capabilities {
     scraping: !!env.SCRAPEDO_API_KEY,
     deepResearch: !!env.OPENROUTER_API_KEY,
     xSearch: !!env.OPENROUTER_API_KEY,
-    llmExtraction: !!env.OPENROUTER_API_KEY,
+    llmExtraction: !!env.AI || !!env.OPENROUTER_API_KEY,
   };
 }
