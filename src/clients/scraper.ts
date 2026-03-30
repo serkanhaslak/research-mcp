@@ -2,19 +2,19 @@
  * Web Scraper Client
  * Generic interface for URL scraping with automatic fallback modes
  * Implements robust error handling that NEVER crashes
+ *
+ * Cloudflare Workers compatible — no process.env, no Node-only APIs
  */
 
-import { parseEnv, SCRAPER } from '../config/index.js';
 import {
   classifyError,
   fetchWithTimeout,
   sleep,
+  calculateBackoff,
   ErrorCode,
   type StructuredError,
-} from '../utils/errors.js';
-import { calculateBackoff } from '../utils/retry.js';
-import { pMapSettled } from '../utils/concurrency.js';
-import { mcpLog } from '../utils/logger.js';
+} from '../lib/errors.js';
+import { pMapSettled } from '../lib/concurrency.js';
 
 // ── Constants ──
 
@@ -23,10 +23,15 @@ type ScrapeMode = typeof SCRAPE_MODES[number];
 
 const CREDIT_COSTS: Record<string, number> = { basic: 1, javascript: 5, javascript_geo: 5 } as const;
 const DEFAULT_SCRAPE_CONCURRENCY = 10 as const;
-const SCRAPE_BATCH_SIZE = 30 as const;
 const MAX_RETRIES = 1 as const;
 /** Overall timeout for all fallback attempts on a single URL */
 const FALLBACK_OVERALL_TIMEOUT_MS = 30_000 as const;
+
+const SCRAPER_CONFIG = {
+  BATCH_SIZE: 30,
+  EXTRACTION_PREFIX: 'Extract ONLY from document — never hallucinate. For structured data (pricing, specs, features) → markdown table. Otherwise → tight bullet points. No intro, no confirmation message, no meta-commentary.',
+  EXTRACTION_SUFFIX: 'Output grounded info only. First line = content, not preamble.',
+} as const;
 
 // ── Interfaces ──
 
@@ -71,13 +76,9 @@ const FALLBACK_ATTEMPTS: readonly FallbackAttempt[] = [
 ] as const;
 
 export class ScraperClient {
-  private apiKey: string;
   private baseURL = 'https://api.scrape.do';
 
-  constructor(apiKey?: string) {
-    const env = parseEnv();
-    this.apiKey = apiKey || env.SCRAPER_API_KEY;
-
+  constructor(private apiKey: string) {
     if (!this.apiKey) {
       throw new Error('Web scraping capability is not configured. Please set up the required API credentials.');
     }
@@ -186,7 +187,7 @@ export class ScraperClient {
 
           if (attempt < maxRetries - 1) {
             const delayMs = calculateBackoff(attempt);
-            mcpLog('warning', `${response.status} on attempt ${attempt + 1}/${maxRetries}. Retrying in ${delayMs}ms`, 'scraper');
+            console.warn(`[scraper] ${response.status} on attempt ${attempt + 1}/${maxRetries}. Retrying in ${delayMs}ms`);
             await sleep(delayMs);
             continue;
           }
@@ -196,7 +197,7 @@ export class ScraperClient {
         lastError = classifyError({ status: response.status, message: content });
         if (attempt < maxRetries - 1 && lastError.retryable) {
           const delayMs = calculateBackoff(attempt);
-          mcpLog('warning', `Status ${response.status}. Retrying in ${delayMs}ms`, 'scraper');
+          console.warn(`[scraper] Status ${response.status}. Retrying in ${delayMs}ms`);
           await sleep(delayMs);
           continue;
         }
@@ -225,7 +226,7 @@ export class ScraperClient {
         // Retryable error - continue if attempts remaining
         if (attempt < maxRetries - 1) {
           const delayMs = calculateBackoff(attempt);
-          mcpLog('warning', `${lastError.code}: ${lastError.message}. Retry ${attempt + 1}/${maxRetries} in ${delayMs}ms`, 'scraper');
+          console.warn(`[scraper] ${lastError.code}: ${lastError.message}. Retry ${attempt + 1}/${maxRetries} in ${delayMs}ms`);
           await sleep(delayMs);
           continue;
         }
@@ -253,7 +254,7 @@ export class ScraperClient {
     for (const attempt of FALLBACK_ATTEMPTS) {
       // Check overall deadline before starting next fallback
       if (Date.now() >= deadline) {
-        mcpLog('warning', `Overall fallback timeout reached for ${url} after ${attemptResults.length} attempt(s)`, 'scraper');
+        console.warn(`[scraper] Overall fallback timeout reached for ${url} after ${attemptResults.length} attempt(s)`);
         break;
       }
 
@@ -261,14 +262,14 @@ export class ScraperClient {
 
       if (result.done) {
         if (attemptResults.length > 0) {
-          mcpLog('info', `Success with ${attempt.description} after ${attemptResults.length} fallback(s)`, 'scraper');
+          console.warn(`[scraper] Success with ${attempt.description} after ${attemptResults.length} fallback(s)`);
         }
         return result.response;
       }
 
       lastResult = result.response;
       attemptResults.push(`${attempt.description}: ${result.response.error?.message || result.response.statusCode}`);
-      mcpLog('warning', `Failed with ${attempt.description} (${result.response.statusCode}), trying next fallback...`, 'scraper');
+      console.warn(`[scraper] Failed with ${attempt.description} (${result.response.statusCode}), trying next fallback...`);
     }
 
     // All fallbacks exhausted or deadline reached
@@ -311,15 +312,15 @@ export class ScraperClient {
       return { done: true, response: result };
     }
 
-    // 502 Bad Gateway — almost always a WAF/CDN block, not a transient issue.
+    // 502 Bad Gateway -- almost always a WAF/CDN block, not a transient issue.
     // Switching render mode won't bypass CDN protection, so fail fast.
     if (result.statusCode === 502) {
-      mcpLog('warning', `502 Bad Gateway for ${url} — likely WAF/CDN block, skipping fallback modes`, 'scraper');
+      console.warn(`[scraper] 502 Bad Gateway for ${url} -- likely WAF/CDN block, skipping fallback modes`);
       return { done: true, response: {
         ...result,
         error: {
           code: ErrorCode.SERVICE_UNAVAILABLE,
-          message: 'Bad gateway — site is blocking automated access',
+          message: 'Bad gateway -- site is blocking automated access',
           retryable: false,
         },
       }};
@@ -327,7 +328,7 @@ export class ScraperClient {
 
     // Non-retryable errors - don't try other modes
     if (result.error && !result.error.retryable) {
-      mcpLog('error', `Non-retryable error with ${attempt.description}: ${result.error.message}`, 'scraper');
+      console.error(`[scraper] Non-retryable error with ${attempt.description}: ${result.error.message}`);
       return { done: true, response: result };
     }
 
@@ -343,7 +344,7 @@ export class ScraperClient {
       return [];
     }
 
-    if (urls.length <= SCRAPE_BATCH_SIZE) {
+    if (urls.length <= SCRAPER_CONFIG.BATCH_SIZE) {
       return this.processBatch(urls, options);
     }
 
@@ -360,18 +361,18 @@ export class ScraperClient {
     options: { timeout?: number } = {},
     onBatchComplete?: (batchNum: number, totalBatches: number, processed: number) => void
   ): Promise<BatchScrapeResult> {
-    const totalBatches = Math.ceil(urls.length / SCRAPE_BATCH_SIZE);
+    const totalBatches = Math.ceil(urls.length / SCRAPER_CONFIG.BATCH_SIZE);
     const allResults: Array<ScrapeResponse & { url: string }> = [];
     let rateLimitHits = 0;
 
-    mcpLog('info', `Starting batch processing: ${urls.length} URLs in ${totalBatches} batch(es)`, 'scraper');
+    console.warn(`[scraper] Starting batch processing: ${urls.length} URLs in ${totalBatches} batch(es)`);
 
     for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
-      const startIdx = batchNum * SCRAPE_BATCH_SIZE;
-      const endIdx = Math.min(startIdx + SCRAPE_BATCH_SIZE, urls.length);
+      const startIdx = batchNum * SCRAPER_CONFIG.BATCH_SIZE;
+      const endIdx = Math.min(startIdx + SCRAPER_CONFIG.BATCH_SIZE, urls.length);
       const batchUrls = urls.slice(startIdx, endIdx);
 
-      mcpLog('info', `Processing batch ${batchNum + 1}/${totalBatches} (${batchUrls.length} URLs)`, 'scraper');
+      console.warn(`[scraper] Processing batch ${batchNum + 1}/${totalBatches} (${batchUrls.length} URLs)`);
 
       const batchResults = await pMapSettled(
         batchUrls,
@@ -396,7 +397,7 @@ export class ScraperClient {
           // This shouldn't happen since scrapeWithFallback never throws,
           // but handle it gracefully just in case
           const errorMsg = result.reason instanceof Error ? result.reason.message : String(result.reason);
-          mcpLog('error', `Unexpected rejection for ${url}: ${errorMsg}`, 'scraper');
+          console.error(`[scraper] Unexpected rejection for ${url}: ${errorMsg}`);
 
           allResults.push({
             url,
@@ -412,12 +413,12 @@ export class ScraperClient {
       try {
         onBatchComplete?.(batchNum + 1, totalBatches, allResults.length);
       } catch (callbackError) {
-        mcpLog('error', `onBatchComplete callback error: ${callbackError}`, 'scraper');
+        console.error(`[scraper] onBatchComplete callback error: ${callbackError}`);
       }
 
-      mcpLog('info', `Completed batch ${batchNum + 1}/${totalBatches} (${allResults.length}/${urls.length} total)`, 'scraper');
+      console.warn(`[scraper] Completed batch ${batchNum + 1}/${totalBatches} (${allResults.length}/${urls.length} total)`);
 
-      // Adaptive delay between batches — back off harder under rate limiting
+      // Adaptive delay between batches -- back off harder under rate limiting
       if (batchNum < totalBatches - 1) {
         const batchDelay = rateLimitHits > 0 ? 2000 : 500;
         await sleep(batchDelay);

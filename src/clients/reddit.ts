@@ -2,26 +2,36 @@
  * Reddit OAuth API Client
  * Fetches posts and comments sorted by score (most upvoted first)
  * Implements robust error handling that NEVER crashes
+ *
+ * Cloudflare Workers compatible — uses KV for token caching, btoa() for base64
  */
 
-import { REDDIT } from '../config/index.js';
-import { USER_AGENT_VERSION } from '../version.js';
-import { calculateBackoff } from '../utils/retry.js';
 import {
   classifyError,
   fetchWithTimeout,
   sleep,
+  calculateBackoff,
   ErrorCode,
   type StructuredError,
-} from '../utils/errors.js';
-import { pMap, pMapSettled } from '../utils/concurrency.js';
-import { mcpLog } from '../utils/logger.js';
+} from '../lib/errors.js';
+import { pMap, pMapSettled } from '../lib/concurrency.js';
 
 // ── Constants ──
 
 const REDDIT_TOKEN_URL = 'https://www.reddit.com/api/v1/access_token' as const;
 const REDDIT_API_BASE = 'https://oauth.reddit.com' as const;
-const TOKEN_EXPIRY_MS = 55_000 as const; // 55 second expiry (conservative)
+
+const REDDIT_CONFIG = {
+  MAX_COMMENT_BUDGET: 1000,
+  MAX_COMMENTS_PER_POST: 200,
+  MIN_POSTS: 2,
+  MAX_POSTS: 50,
+  BATCH_SIZE: 10,
+  RETRY_COUNT: 5,
+  RETRY_DELAYS: [2000, 4000, 8000, 16000, 32000] as const,
+} as const;
+
+const USER_AGENT = 'script:research-mcp/5.0.0 (by /u/research-mcp)' as const;
 
 // ── Data Interfaces ──
 
@@ -112,23 +122,11 @@ interface RedditCommentData {
 type RedditPostResponse = [RedditListing<RedditPostData>, RedditListing<RedditCommentData>];
 
 export function calculateCommentAllocation(postCount: number): CommentAllocation {
-  const totalBudget = REDDIT.MAX_COMMENT_BUDGET;
+  const totalBudget = REDDIT_CONFIG.MAX_COMMENT_BUDGET;
   const perPostBase = Math.floor(totalBudget / postCount);
-  const perPostCapped = Math.min(perPostBase, REDDIT.MAX_COMMENTS_PER_POST);
+  const perPostCapped = Math.min(perPostBase, REDDIT_CONFIG.MAX_COMMENTS_PER_POST);
   return { totalBudget, perPostBase, perPostCapped, redistributed: false };
 }
-
-// ============================================================================
-// Module-Level Token Cache (shared across all RedditClient instances)
-// ============================================================================
-let cachedToken: string | null = null;
-let cachedTokenExpiry = 0;
-
-// Token cache logging only when DEBUG env is set
-const DEBUG_TOKEN_CACHE = process.env.DEBUG_REDDIT === 'true';
-
-// Pending auth promise for deduplicating concurrent auth calls
-let pendingAuthPromise: Promise<string | null> | null = null;
 
 // ── Decomposed Helpers ──
 
@@ -143,7 +141,6 @@ async function fetchRedditJson(
   id: string,
   maxComments: number,
   token: string,
-  userAgent: string,
   sort: CommentSort = 'top',
 ): Promise<RedditPostResponse> {
   const limit = Math.min(maxComments, 500);
@@ -152,7 +149,7 @@ async function fetchRedditJson(
   const res = await fetchWithTimeout(apiUrl, {
     headers: {
       'Authorization': `Bearer ${token}`,
-      'User-Agent': userAgent,
+      'User-Agent': USER_AGENT,
     },
     timeoutMs: 30000,
   });
@@ -313,12 +310,12 @@ async function redistributeComments(
   if (surplus > 0 && truncatedUrls.length > 0) {
     const extraPerPost = Math.min(
       Math.floor(surplus / truncatedUrls.length),
-      REDDIT.MAX_COMMENTS_PER_POST,
+      REDDIT_CONFIG.MAX_COMMENTS_PER_POST,
     );
-    const newLimit = Math.min(initialPerPost + extraPerPost, REDDIT.MAX_COMMENTS_PER_POST);
+    const newLimit = Math.min(initialPerPost + extraPerPost, REDDIT_CONFIG.MAX_COMMENTS_PER_POST);
 
     allocation.redistributed = true;
-    mcpLog('info', `Phase 2: Redistributing ${surplus} surplus comments to ${truncatedUrls.length} truncated post(s) (${initialPerPost} → ${newLimit}/post)`, 'reddit');
+    console.warn(`[reddit] Phase 2: Redistributing ${surplus} surplus comments to ${truncatedUrls.length} truncated post(s) (${initialPerPost} -> ${newLimit}/post)`);
 
     const refetchResults = await pMapSettled(
       truncatedUrls,
@@ -338,7 +335,7 @@ async function redistributeComments(
       }
     }
 
-    mcpLog('info', `Phase 2 complete: re-fetched ${truncatedUrls.length} post(s)`, 'reddit');
+    console.warn(`[reddit] Phase 2 complete: re-fetched ${truncatedUrls.length} post(s)`);
   }
 
   return rateLimitHits;
@@ -347,39 +344,40 @@ async function redistributeComments(
 // ── RedditClient Class ──
 
 export class RedditClient {
-  private userAgent = `script:${USER_AGENT_VERSION} (by /u/research-powerpack)`;
+  /** Instance-level pending auth promise (replaces module-level) */
+  private pendingAuthPromise: Promise<string | null> | null = null;
 
-  constructor(private clientId: string, private clientSecret: string) {}
+  constructor(
+    private clientId: string,
+    private clientSecret: string,
+    private kv?: KVNamespace,
+  ) {}
 
   /**
-   * Authenticate with Reddit API with retry logic
-   * Uses module-level token cache and promise deduplication to prevent
-   * concurrent auth calls from firing multiple token requests
-   * Returns null on failure instead of throwing
+   * Get an OAuth token, with KV-based caching if available
    */
-  private async auth(): Promise<string | null> {
-    if (cachedToken && Date.now() < cachedTokenExpiry - TOKEN_EXPIRY_MS) {
-      if (DEBUG_TOKEN_CACHE) console.error('[RedditClient] Token cache HIT');
-      return cachedToken;
+  private async getToken(): Promise<string | null> {
+    // Check KV cache first
+    if (this.kv) {
+      const cached = await this.kv.get('reddit:oauth_token');
+      if (cached) return cached;
     }
 
-    if (pendingAuthPromise) {
-      if (DEBUG_TOKEN_CACHE) console.error('[RedditClient] Auth already in flight, awaiting...');
-      return pendingAuthPromise;
+    // Deduplicate concurrent auth calls at instance level
+    if (this.pendingAuthPromise) {
+      return this.pendingAuthPromise;
     }
 
-    pendingAuthPromise = this.performAuth();
+    this.pendingAuthPromise = this.performAuth();
     try {
-      return await pendingAuthPromise;
+      return await this.pendingAuthPromise;
     } finally {
-      pendingAuthPromise = null;
+      this.pendingAuthPromise = null;
     }
   }
 
   private async performAuth(): Promise<string | null> {
-    if (DEBUG_TOKEN_CACHE) console.error('[RedditClient] Token cache MISS - authenticating');
-
-    const credentials = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
+    const credentials = btoa(`${this.clientId}:${this.clientSecret}`);
 
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
@@ -388,7 +386,7 @@ export class RedditClient {
           headers: {
             'Authorization': `Basic ${credentials}`,
             'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': this.userAgent,
+            'User-Agent': USER_AGENT,
           },
           body: 'grant_type=client_credentials',
           timeoutMs: 15000,
@@ -396,11 +394,9 @@ export class RedditClient {
 
         if (!res.ok) {
           const text = await res.text().catch(() => '');
-          mcpLog('error', `Auth failed (${res.status}): ${text}`, 'reddit');
+          console.error(`[reddit] Auth failed (${res.status}): ${text}`);
 
           if (res.status === 401 || res.status === 403) {
-            cachedToken = null;
-            cachedTokenExpiry = 0;
             return null;
           }
 
@@ -414,22 +410,22 @@ export class RedditClient {
 
         const data = await res.json() as { access_token?: string; expires_in?: number };
         if (!data.access_token) {
-          mcpLog('error', 'Auth response missing access_token', 'reddit');
+          console.error('[reddit] Auth response missing access_token');
           return null;
         }
 
-        cachedToken = data.access_token;
-        cachedTokenExpiry = Date.now() + (data.expires_in || 3600) * 1000;
-        return cachedToken;
+        // Cache in KV if available
+        if (this.kv && data.access_token) {
+          await this.kv.put('reddit:oauth_token', data.access_token, {
+            expirationTtl: Math.max((data.expires_in || 3600) - 60, 60),
+          });
+        }
+
+        return data.access_token;
 
       } catch (error) {
         const err = classifyError(error);
-        mcpLog('error', `Auth error (attempt ${attempt + 1}): ${err.message}`, 'reddit');
-
-        if (err.code === ErrorCode.AUTH_ERROR) {
-          cachedToken = null;
-          cachedTokenExpiry = 0;
-        }
+        console.error(`[reddit] Auth error (attempt ${attempt + 1}): ${err.message}`);
 
         if (attempt < 2 && err.retryable) {
           await sleep(calculateBackoff(attempt));
@@ -458,16 +454,16 @@ export class RedditClient {
       throw new Error(`Invalid Reddit URL format: ${url}`);
     }
 
-    const token = await this.auth();
+    const token = await this.getToken();
     if (!token) {
       throw new Error('Reddit authentication failed - check credentials');
     }
 
     let lastError: StructuredError | null = null;
 
-    for (let attempt = 0; attempt < REDDIT.RETRY_COUNT; attempt++) {
+    for (let attempt = 0; attempt < REDDIT_CONFIG.RETRY_COUNT; attempt++) {
       try {
-        const data = await fetchRedditJson(parsed.sub, parsed.id, maxComments, token, this.userAgent, sort);
+        const data = await fetchRedditJson(parsed.sub, parsed.id, maxComments, token, sort);
         const [postListing, commentListing] = data;
 
         const post = parsePostData(postListing, parsed.sub);
@@ -478,11 +474,11 @@ export class RedditClient {
       } catch (error) {
         lastError = classifyError(error);
 
-        // Rate limited — always retry with backoff
+        // Rate limited -- always retry with backoff
         const status = (error as Error & { status?: number }).status;
         if (status === 429) {
-          const delay = REDDIT.RETRY_DELAYS[attempt] || 32000;
-          mcpLog('warning', `Rate limited. Retry ${attempt + 1}/${REDDIT.RETRY_COUNT} after ${delay}ms`, 'reddit');
+          const delay = REDDIT_CONFIG.RETRY_DELAYS[attempt] || 32000;
+          console.warn(`[reddit] Rate limited. Retry ${attempt + 1}/${REDDIT_CONFIG.RETRY_COUNT} after ${delay}ms`);
           await sleep(delay);
           continue;
         }
@@ -491,9 +487,9 @@ export class RedditClient {
           throw error instanceof Error ? error : new Error(lastError.message);
         }
 
-        if (attempt < REDDIT.RETRY_COUNT - 1) {
-          const delay = REDDIT.RETRY_DELAYS[attempt] || 2000;
-          mcpLog('warning', `${lastError.code}: ${lastError.message}. Retry ${attempt + 1}/${REDDIT.RETRY_COUNT}`, 'reddit');
+        if (attempt < REDDIT_CONFIG.RETRY_COUNT - 1) {
+          const delay = REDDIT_CONFIG.RETRY_DELAYS[attempt] || 2000;
+          console.warn(`[reddit] ${lastError.code}: ${lastError.message}. Retry ${attempt + 1}/${REDDIT_CONFIG.RETRY_COUNT}`);
           await sleep(delay);
         }
       }
@@ -503,7 +499,7 @@ export class RedditClient {
   }
 
   async getPosts(urls: string[], maxComments = 100, sort: CommentSort = 'top'): Promise<Map<string, PostResult | Error>> {
-    if (urls.length <= REDDIT.BATCH_SIZE) {
+    if (urls.length <= REDDIT_CONFIG.BATCH_SIZE) {
       const results = await pMap(
         urls,
         u => this.getPost(u, maxComments, sort).catch(e => e as Error),
@@ -527,15 +523,15 @@ export class RedditClient {
     const allocation = calculateCommentAllocation(urls.length);
     const initialPerPost = fetchComments ? (maxCommentsOverride || allocation.perPostCapped) : 0;
 
-    // ── Phase 1: Fetch all posts with equal initial allocation ──
-    const totalBatches = Math.ceil(urls.length / REDDIT.BATCH_SIZE);
-    mcpLog('info', `Phase 1: Fetching ${urls.length} posts in ${totalBatches} batch(es), ${initialPerPost} comments/post`, 'reddit');
+    // -- Phase 1: Fetch all posts with equal initial allocation --
+    const totalBatches = Math.ceil(urls.length / REDDIT_CONFIG.BATCH_SIZE);
+    console.warn(`[reddit] Phase 1: Fetching ${urls.length} posts in ${totalBatches} batch(es), ${initialPerPost} comments/post`);
 
     for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
-      const startIdx = batchNum * REDDIT.BATCH_SIZE;
-      const batchUrls = urls.slice(startIdx, startIdx + REDDIT.BATCH_SIZE);
+      const startIdx = batchNum * REDDIT_CONFIG.BATCH_SIZE;
+      const batchUrls = urls.slice(startIdx, startIdx + REDDIT_CONFIG.BATCH_SIZE);
 
-      mcpLog('info', `Batch ${batchNum + 1}/${totalBatches} (${batchUrls.length} posts)`, 'reddit');
+      console.warn(`[reddit] Batch ${batchNum + 1}/${totalBatches} (${batchUrls.length} posts)`);
 
       const batchResult = await processBatch(this, batchUrls, initialPerPost, sort);
       for (const [url, result] of batchResult.results) {
@@ -546,17 +542,17 @@ export class RedditClient {
       try {
         onBatchComplete?.(batchNum + 1, totalBatches, allResults.size);
       } catch (callbackError) {
-        mcpLog('error', `onBatchComplete callback error: ${callbackError}`, 'reddit');
+        console.error(`[reddit] onBatchComplete callback error: ${callbackError}`);
       }
 
-      mcpLog('info', `Batch ${batchNum + 1} complete (${allResults.size}/${urls.length})`, 'reddit');
+      console.warn(`[reddit] Batch ${batchNum + 1} complete (${allResults.size}/${urls.length})`);
 
       if (batchNum < totalBatches - 1) {
         await sleep(500);
       }
     }
 
-    // ── Phase 2: Redistribute surplus to truncated posts ──
+    // -- Phase 2: Redistribute surplus to truncated posts --
     if (fetchComments && !maxCommentsOverride) {
       rateLimitHits += await redistributeComments(this, allResults, allocation, initialPerPost, sort);
     }

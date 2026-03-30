@@ -2,18 +2,19 @@
  * Hacker News Client
  * Search HN via the free Algolia HN Search API (no API key required)
  * Implements robust error handling that NEVER crashes
+ *
+ * Cloudflare Workers compatible — no process.env, no Node-only APIs
  */
 
 import {
   classifyError,
   fetchWithTimeout,
   sleep,
+  calculateBackoff,
   ErrorCode,
   type StructuredError,
-} from '../utils/errors.js';
-import { calculateBackoff } from '../utils/retry.js';
-import { pMap } from '../utils/concurrency.js';
-import { mcpLog } from '../utils/logger.js';
+} from '../lib/errors.js';
+import { pMap } from '../lib/concurrency.js';
 
 // ── Constants ──
 
@@ -195,7 +196,7 @@ export class HackerNewsClient {
     for (let attempt = 0; attempt <= HN_RETRY_CONFIG.maxRetries; attempt++) {
       try {
         if (attempt > 0) {
-          mcpLog('warning', `HN search retry attempt ${attempt}/${HN_RETRY_CONFIG.maxRetries}`, 'hackernews');
+          console.warn(`[hackernews] HN search retry attempt ${attempt}/${HN_RETRY_CONFIG.maxRetries}`);
         }
 
         const response = await fetchWithTimeout(url, {
@@ -207,11 +208,11 @@ export class HackerNewsClient {
         if (!response.ok) {
           if (this.isRetryable(response.status) && attempt < HN_RETRY_CONFIG.maxRetries) {
             const delayMs = calculateBackoff(attempt, HN_RETRY_CONFIG.baseDelayMs, HN_RETRY_CONFIG.maxDelayMs);
-            mcpLog('warning', `HN search ${response.status}, retrying in ${delayMs}ms...`, 'hackernews');
+            console.warn(`[hackernews] HN search ${response.status}, retrying in ${delayMs}ms...`);
             await sleep(delayMs);
             continue;
           }
-          mcpLog('error', `HN search failed with status ${response.status}`, 'hackernews');
+          console.error(`[hackernews] HN search failed with status ${response.status}`);
           return [];
         }
 
@@ -219,7 +220,7 @@ export class HackerNewsClient {
         try {
           data = await response.json() as HNApiResponse;
         } catch {
-          mcpLog('error', 'Failed to parse HN search response', 'hackernews');
+          console.error('[hackernews] Failed to parse HN search response');
           return [];
         }
 
@@ -229,11 +230,11 @@ export class HackerNewsClient {
         const err = classifyError(error);
         if (this.isRetryable(undefined, error) && attempt < HN_RETRY_CONFIG.maxRetries) {
           const delayMs = calculateBackoff(attempt, HN_RETRY_CONFIG.baseDelayMs, HN_RETRY_CONFIG.maxDelayMs);
-          mcpLog('warning', `HN search ${err.code}, retrying in ${delayMs}ms...`, 'hackernews');
+          console.warn(`[hackernews] HN search ${err.code}, retrying in ${delayMs}ms...`);
           await sleep(delayMs);
           continue;
         }
-        mcpLog('error', `HN search failed: ${err.message}`, 'hackernews');
+        console.error(`[hackernews] HN search failed: ${err.message}`);
         return [];
       }
     }
