@@ -196,7 +196,7 @@ export async function withStallProtection<T>(
 ): Promise<T> {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const controller = new AbortController();
-    let stallTimer: ReturnType<typeof setTimeout> | undefined;
+    let stallTimer: ReturnType<typeof setTimeout> | null = null;
     const stallPromise = new Promise<never>((_, reject) => {
       stallTimer = setTimeout(() => {
         controller.abort();

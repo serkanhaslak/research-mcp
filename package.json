@@ -1,42 +1,15 @@
 {
   "name": "research-mcp",
   "version": "5.0.0",
-  "description": "Research MCP server: web search, Reddit, X/Twitter, scraping, deep research. Cloudflare Workers + STDIO.",
+  "private": true,
+  "description": "Research MCP server on Cloudflare Workers — web search, Reddit, X/Twitter, scraping, deep research.",
   "type": "module",
-  "main": "dist/stdio.js",
-  "bin": {
-    "research-mcp": "dist/stdio.js"
-  },
-  "files": [
-    "dist"
-  ],
   "scripts": {
     "dev": "wrangler dev",
-    "dev:stdio": "tsx src/stdio.ts",
     "deploy": "wrangler deploy",
-    "build": "tsc",
-    "typecheck": "tsc --noEmit",
-    "start": "node dist/stdio.js"
-  },
-  "keywords": [
-    "mcp",
-    "research",
-    "cloudflare-workers",
-    "reddit",
-    "search",
-    "ai",
-    "model-context-protocol",
-    "deep-research",
-    "web-scraping"
-  ],
-  "author": "Yiğit Konur <yigit35@gmail.com>",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/anthropics/research-mcp.git"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.26.0",
     "hono": "^4.7.10",
     "openai": "^4.77.0",
     "turndown": "^7.2.2",
@@ -44,13 +17,9 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250313.0",
-    "@types/node": "^25.5.0",
     "@types/turndown": "^5.0.6",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "wrangler": "^4.63.0"
-  },
-  "engines": {
-    "node": ">=20.0.0"
   }
 }
