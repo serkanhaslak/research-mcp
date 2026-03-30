@@ -73,3 +73,9 @@ test-logs/
 *.tgz
 private/
 .wrangler/
+
+# Claude Code
+.claude/
+
+# Superpowers agents
+.agents/
