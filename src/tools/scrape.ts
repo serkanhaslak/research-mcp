@@ -7,8 +7,7 @@ import { z } from 'zod';
 import type { ToolDefinition, ToolResult } from './types.js';
 import type { ResolvedEnv } from '../env.js';
 import { ScraperClient } from '../clients/scraper.js';
-import { extractWithWorkersAI } from '../lib/extraction.js';
-import { OpenRouterClient } from '../clients/openrouter.js';
+import { extractContent } from '../lib/extraction.js';
 import { htmlToMarkdown, removeMetaTags } from '../lib/markdown.js';
 import { pMap } from '../lib/concurrency.js';
 import { formatSuccess, formatError, formatBatchHeader, formatDuration, TOKEN_BUDGET, calculateTokenAllocation } from '../lib/response.js';
@@ -128,27 +127,14 @@ export const scrapeTool: ToolDefinition<typeof schema> = {
       // Optional LLM extraction — Workers AI (primary) or OpenRouter (fallback)
       let llmErrors = 0;
       let processedItems = successItems;
-      if (params.use_llm && successItems.length > 0) {
-        const useWorkersAI = !!env.AI;
-        const useOpenRouter = !useWorkersAI && !!env.OPENROUTER_API_KEY;
-
-        if (useWorkersAI || useOpenRouter) {
-          const llmResults = await pMap(successItems, async (item) => {
-            let result;
-            if (useWorkersAI) {
-              result = await extractWithWorkersAI(env.AI!, item.content, enhancedInstruction, tokensPerUrl, env);
-            } else {
-              const llmClient = new OpenRouterClient(env.OPENROUTER_API_KEY!, { extractionModel: env.LLM_EXTRACTION_MODEL });
-              result = await llmClient.extract(item.content, enhancedInstruction, tokensPerUrl);
-            }
-            if (result.processed) {
-              return { ...item, content: result.content };
-            }
-            llmErrors++;
-            return item;
-          }, 3);
-          processedItems = llmResults;
-        }
+      if (params.use_llm && successItems.length > 0 && (env.AI || env.OPENROUTER_API_KEY)) {
+        const llmResults = await pMap(successItems, async (item) => {
+          const result = await extractContent(env, item.content, enhancedInstruction, tokensPerUrl);
+          if (result.processed) return { ...item, content: result.content };
+          llmErrors++;
+          return item;
+        }, 3);
+        processedItems = llmResults;
       }
 
       // Assemble output

@@ -15,10 +15,14 @@ const app = new Hono<{ Bindings: Env; Variables: { resolved: ResolvedEnv } }>();
 app.use('*', logger());
 app.use('*', cors());
 
-// Resolve Secrets Store bindings to plain strings (once per request)
-app.use('*', async (c, next) => {
-  const resolved = await resolveEnv(c.env);
-  c.set('resolved', resolved);
+// Resolve secrets only for routes that need them (OAuth + MCP)
+// Discovery, health, and root don't use secrets — skip the 7 async KV reads
+app.use('/oauth/*', async (c, next) => {
+  c.set('resolved', await resolveEnv(c.env));
+  return next();
+});
+app.use('/mcp/*', async (c, next) => {
+  c.set('resolved', await resolveEnv(c.env));
   return next();
 });
 

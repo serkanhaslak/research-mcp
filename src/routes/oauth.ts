@@ -57,7 +57,7 @@ oauthRoutes.post('/register', async (c) => {
   const body = await c.req.json();
   const clientId = crypto.randomUUID();
 
-  await c.env.OAUTH_TOKENS.put(
+  await c.get('resolved').OAUTH_TOKENS.put(
     `client:${clientId}`,
     JSON.stringify({
       client_id: clientId,
@@ -180,7 +180,7 @@ oauthRoutes.post('/token', async (c) => {
     }
   }
 
-  const storedRaw = (await c.env.OAUTH_TOKENS.get(`code:${code}`, 'json')) as {
+  const storedRaw = (await c.get('resolved').OAUTH_TOKENS.get(`code:${code}`, 'json')) as {
     client_id: string;
     redirect_uri: string;
     code_challenge: string;
@@ -196,7 +196,7 @@ oauthRoutes.post('/token', async (c) => {
   }
 
   // Delete code immediately (one-time use)
-  await c.env.OAUTH_TOKENS.delete(`code:${code}`);
+  await c.get('resolved').OAUTH_TOKENS.delete(`code:${code}`);
 
   // Validate client_id matches
   if (client_id && client_id !== storedRaw.client_id) {
@@ -227,7 +227,7 @@ oauthRoutes.post('/token', async (c) => {
   const accessToken = generateToken();
   const expiresIn = 60 * 60 * 24 * 30; // 30 days
 
-  await c.env.OAUTH_TOKENS.put(
+  await c.get('resolved').OAUTH_TOKENS.put(
     `token:${accessToken}`,
     JSON.stringify({
       client_id: storedRaw.client_id,
@@ -250,7 +250,7 @@ oauthRoutes.post('/revoke', async (c) => {
   const body = await c.req.parseBody();
   const token = body.token as string;
   if (token) {
-    await c.env.OAUTH_TOKENS.delete(`token:${token}`);
+    await c.get('resolved').OAUTH_TOKENS.delete(`token:${token}`);
   }
   return c.json({ success: true });
 });
