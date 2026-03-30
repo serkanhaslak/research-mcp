@@ -159,7 +159,7 @@ export class OpenRouterClient {
       timeout: options.timeout || 120000,
       maxRetries: 0,
     });
-    this.model = options.model || 'x-ai/grok-4-fast';
+    this.model = options.model || 'x-ai/grok-4.1-fast';
     this.fallbackModel = options.fallbackModel || 'google/gemini-2.5-flash';
     this.extractionModel = options.extractionModel || 'openai/gpt-oss-120b:nitro';
     this.reasoningEffort = options.reasoningEffort || 'high';
