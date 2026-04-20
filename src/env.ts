@@ -8,6 +8,9 @@ export interface Env {
   OAUTH_TOKENS: KVNamespace;
   MCP_SESSIONS: KVNamespace;
 
+  // D1: capability-URL auth (email-bound shared secrets)
+  AUTH_DB: D1Database;
+
   // Workers AI binding (for LLM extraction — runs on Cloudflare, no external API)
   AI?: Ai;
 
@@ -25,10 +28,6 @@ export interface Env {
   SCRAPEDO_API_KEY?: string | SecretStoreBinding;
   OPENROUTER_API_KEY?: string | SecretStoreBinding;
   OPENROUTER_BASE_URL?: string;
-
-  // OAuth credentials
-  OAUTH_CLIENT_ID?: string | SecretStoreBinding;
-  OAUTH_CLIENT_SECRET?: string | SecretStoreBinding;
 
   // AI Model config
   RESEARCH_MODEL?: string;
@@ -54,6 +53,7 @@ interface SecretStoreBinding {
 export interface ResolvedEnv {
   OAUTH_TOKENS: KVNamespace;
   MCP_SESSIONS: KVNamespace;
+  AUTH_DB: D1Database;
 
   // Workers AI binding — passed through directly (not a secret)
   AI?: Ai;
@@ -70,9 +70,6 @@ export interface ResolvedEnv {
   SCRAPEDO_API_KEY?: string;
   OPENROUTER_API_KEY?: string;
   OPENROUTER_BASE_URL?: string;
-
-  OAUTH_CLIENT_ID?: string;
-  OAUTH_CLIENT_SECRET?: string;
 
   RESEARCH_MODEL?: string;
   RESEARCH_FALLBACK_MODEL?: string;
@@ -102,20 +99,19 @@ async function resolveSecret(val: string | SecretStoreBinding | undefined): Prom
 export async function resolveEnv(raw: Env): Promise<ResolvedEnv> {
   const [
     serperKey, redditId, redditSecret, scrapedoKey,
-    openrouterKey, oauthClientId, oauthClientSecret,
+    openrouterKey,
   ] = await Promise.all([
     resolveSecret(raw.SERPER_API_KEY),
     resolveSecret(raw.REDDIT_CLIENT_ID),
     resolveSecret(raw.REDDIT_CLIENT_SECRET),
     resolveSecret(raw.SCRAPEDO_API_KEY),
     resolveSecret(raw.OPENROUTER_API_KEY),
-    resolveSecret(raw.OAUTH_CLIENT_ID),
-    resolveSecret(raw.OAUTH_CLIENT_SECRET),
   ]);
 
   return {
     OAUTH_TOKENS: raw.OAUTH_TOKENS,
     MCP_SESSIONS: raw.MCP_SESSIONS,
+    AUTH_DB: raw.AUTH_DB,
     AI: raw.AI,
     SERVER_NAME: raw.SERVER_NAME,
     SERVER_VERSION: raw.SERVER_VERSION,
@@ -128,8 +124,6 @@ export async function resolveEnv(raw: Env): Promise<ResolvedEnv> {
     SCRAPEDO_API_KEY: scrapedoKey,
     OPENROUTER_API_KEY: openrouterKey,
     OPENROUTER_BASE_URL: typeof raw.OPENROUTER_BASE_URL === 'string' ? raw.OPENROUTER_BASE_URL : undefined,
-    OAUTH_CLIENT_ID: oauthClientId,
-    OAUTH_CLIENT_SECRET: oauthClientSecret,
     RESEARCH_MODEL: raw.RESEARCH_MODEL,
     RESEARCH_FALLBACK_MODEL: raw.RESEARCH_FALLBACK_MODEL,
     LLM_EXTRACTION_MODEL: raw.LLM_EXTRACTION_MODEL,

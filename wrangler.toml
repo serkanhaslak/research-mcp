@@ -18,6 +18,12 @@ id = "e303b05e12614e0aa2b620946d91134b"
 binding = "MCP_SESSIONS"
 id = "b10c0fad3ae04d26a733e5eaa49cdbae"
 
+# D1: capability-URL auth (email-bound shared secrets)
+[[d1_databases]]
+binding = "AUTH_DB"
+database_name = "research-mcp-auth"
+database_id = "0762810d-7309-4aff-994d-9be1d5356f8e"
+
 # Secrets Store bindings
 [[secrets_store_secrets]]
 binding = "SERPER_API_KEY"
@@ -48,16 +54,6 @@ secret_name = "REDDIT_CLIENT_SECRET"
 binding = "CEREBRAS_API_KEY"
 store_id = "89321494a85d4b7c917566eac5cbc696"
 secret_name = "CEREBRAS_API_KEY"
-
-[[secrets_store_secrets]]
-binding = "OAUTH_CLIENT_ID"
-store_id = "89321494a85d4b7c917566eac5cbc696"
-secret_name = "OAUTH_CLIENT_ID"
-
-[[secrets_store_secrets]]
-binding = "OAUTH_CLIENT_SECRET"
-store_id = "89321494a85d4b7c917566eac5cbc696"
-secret_name = "OAUTH_CLIENT_SECRET"
 
 # Observability (replaces custom usage tracker)
 [observability]

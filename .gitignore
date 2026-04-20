@@ -79,3 +79,7 @@ private/
 
 # Superpowers agents
 .agents/
+CAPABILITY_SECRETS.md
+
+# Editor/tooling scratch
+.factory/
