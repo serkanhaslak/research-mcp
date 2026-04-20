@@ -50,11 +50,6 @@ binding = "REDDIT_CLIENT_SECRET"
 store_id = "89321494a85d4b7c917566eac5cbc696"
 secret_name = "REDDIT_CLIENT_SECRET"
 
-[[secrets_store_secrets]]
-binding = "CEREBRAS_API_KEY"
-store_id = "89321494a85d4b7c917566eac5cbc696"
-secret_name = "CEREBRAS_API_KEY"
-
 # Observability (replaces custom usage tracker)
 [observability]
 enabled = true
@@ -65,7 +60,6 @@ SERVER_NAME = "research-mcp"
 SERVER_VERSION = "5.0.0"
 MCP_PROTOCOL_VERSION = "2025-11-25"
 SESSION_TTL_SECONDS = "2592000"
-MAX_SESSIONS = "100"
 DEFAULT_REASONING_EFFORT = "high"
 DEFAULT_MAX_URLS = "100"
 API_TIMEOUT_MS = "300000"

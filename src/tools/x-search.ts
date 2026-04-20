@@ -85,7 +85,10 @@ export const xSearchTool: ToolDefinition<typeof schema> = {
         ...(to_date ? { to_date } : {}),
       }));
 
-      const client = new OpenRouterClient(env.OPENROUTER_API_KEY!);
+      const client = new OpenRouterClient(env.OPENROUTER_API_KEY!, {
+        baseUrl: env.OPENROUTER_BASE_URL,
+        timeout: env.API_TIMEOUT_MS ? parseInt(env.API_TIMEOUT_MS, 10) : undefined,
+      });
       const results = await client.xSearchMultiple(searchQueries, MAX_CONCURRENCY);
 
       let successCount = 0;

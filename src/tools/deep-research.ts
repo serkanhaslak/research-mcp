@@ -144,6 +144,8 @@ export const deepResearchTool: ToolDefinition<typeof schema> = {
     let client: OpenRouterClient;
     try {
       client = new OpenRouterClient(env.OPENROUTER_API_KEY!, {
+        baseUrl: env.OPENROUTER_BASE_URL,
+        timeout: env.API_TIMEOUT_MS ? parseInt(env.API_TIMEOUT_MS, 10) : undefined,
         model: env.RESEARCH_MODEL,
         fallbackModel: env.RESEARCH_FALLBACK_MODEL,
         extractionModel: env.LLM_EXTRACTION_MODEL,
