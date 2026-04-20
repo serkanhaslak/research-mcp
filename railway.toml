@@ -1,9 +1,0 @@
-[build]
-buildCommand = "pnpm install --frozen-lockfile && pnpm build"
-
-[deploy]
-startCommand = "MCP_TRANSPORT=http node dist/index.js"
-healthcheckPath = "/health"
-healthcheckTimeout = 300
-restartPolicyType = "ON_FAILURE"
-restartPolicyMaxRetries = 5

@@ -19,7 +19,6 @@ export interface Env {
   SERVER_VERSION: string;
   MCP_PROTOCOL_VERSION: string;
   SESSION_TTL_SECONDS: string;
-  MAX_SESSIONS: string;
 
   // API Keys — may be string (wrangler secret) or SecretStoreSecret object
   SERPER_API_KEY?: string | SecretStoreBinding;
@@ -62,7 +61,6 @@ export interface ResolvedEnv {
   SERVER_VERSION: string;
   MCP_PROTOCOL_VERSION: string;
   SESSION_TTL_SECONDS: string;
-  MAX_SESSIONS: string;
 
   SERPER_API_KEY?: string;
   REDDIT_CLIENT_ID?: string;
@@ -117,7 +115,6 @@ export async function resolveEnv(raw: Env): Promise<ResolvedEnv> {
     SERVER_VERSION: raw.SERVER_VERSION,
     MCP_PROTOCOL_VERSION: raw.MCP_PROTOCOL_VERSION,
     SESSION_TTL_SECONDS: raw.SESSION_TTL_SECONDS,
-    MAX_SESSIONS: raw.MAX_SESSIONS,
     SERPER_API_KEY: serperKey,
     REDDIT_CLIENT_ID: redditId,
     REDDIT_CLIENT_SECRET: redditSecret,

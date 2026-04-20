@@ -112,7 +112,9 @@ async function extractWithOpenRouter(
   // Dynamic import to avoid loading OpenAI SDK when Workers AI is available
   const { OpenRouterClient } = await import('../clients/openrouter.js');
   const client = new OpenRouterClient(env.OPENROUTER_API_KEY!, {
+    baseUrl: env.OPENROUTER_BASE_URL,
     extractionModel: env.LLM_EXTRACTION_MODEL,
+    timeout: env.API_TIMEOUT_MS ? parseInt(env.API_TIMEOUT_MS, 10) : undefined,
   });
   return client.extract(content, instruction, maxTokens);
 }

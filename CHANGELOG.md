@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.1] - 2026-04-20
+
+### Changed
+
+- Realigned repository metadata, docs, and local scripts with the Cloudflare Workers service that actually ships today
+- Added automated Vitest coverage for OAuth/discovery/MCP route flow and OpenRouter config propagation
+- Wired `OPENROUTER_BASE_URL` and `API_TIMEOUT_MS` through the OpenRouter-backed tool paths
+
+### Removed
+
+- Stale Railway deployment config
+- Unused `CEREBRAS_API_KEY` binding and unused `MAX_SESSIONS` runtime config
+
 ## [3.6.2] - 2026-02-01
 
 ### Added
